@@ -41,17 +41,16 @@ throne.db
 *.dmp
 dump/
 
-# Media, test captures and screenshots
-*.png
-*.jpg
-*.jpeg
+# Media, test captures and screenshots (root only)
+/*.png
+/*.jpg
+/*.jpeg
+/beaxty_*.png
 bganim.mp4
 
-# Allow explicit resources if added
-!res/**/*.png
-!res/**/*.jpg
-!res/**/*.svg
-!res/**/*.ico
+# Allow all application and 3rdparty resource assets
+!res/**
+!3rdparty/**/res/**
 
 # Developer environments & IDE configurations
 .vscode/
