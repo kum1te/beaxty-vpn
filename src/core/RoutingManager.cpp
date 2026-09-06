@@ -20,7 +20,9 @@
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QSet>
+#if defined(Q_OS_UNIX)
 #include <unistd.h>
+#endif
 #include <algorithm>
 
 RoutingManager *RoutingManager::s_instance = nullptr;
@@ -306,10 +308,11 @@ QVariantList RoutingManager::getRunningApplications() {
         }
     }
 
-    uid_t currentUid = getuid();
     QSet<QString> seenProcessKeys;
     QList<QVariantMap> runningApps;
 
+#if defined(Q_OS_UNIX)
+    uid_t currentUid = getuid();
     QDir procDir(QStringLiteral("/proc"));
     const auto entries = procDir.entryList(QDir::Dirs | QDir::NoDotAndDotDot);
 
@@ -367,6 +370,7 @@ QVariantList RoutingManager::getRunningApplications() {
             runningApps.append(item);
         }
     }
+#endif
 
     QList<QVariantMap> otherInstalledApps;
     for (const auto &dinfo : allDesktopList) {
