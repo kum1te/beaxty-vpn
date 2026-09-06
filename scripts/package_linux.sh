@@ -34,7 +34,11 @@ fi
 
 # 2. Build Release beaxty-vpn
 echo "==> Configuring and building BeaxtyVPN (Release)..."
-cmake -B "${BUILD_DIR}" -S "${REPO_ROOT}" -DCMAKE_BUILD_TYPE=Release
+if command -v ninja &>/dev/null; then
+    cmake -B "${BUILD_DIR}" -S "${REPO_ROOT}" -G "Ninja" -DCMAKE_BUILD_TYPE=Release
+else
+    cmake -B "${BUILD_DIR}" -S "${REPO_ROOT}" -DCMAKE_BUILD_TYPE=Release
+fi
 cmake --build "${BUILD_DIR}" --target beaxty-vpn -j"$(nproc)"
 
 # 3. Setup packaging tools
@@ -49,7 +53,7 @@ download_tool() {
             cp "/tmp/tools/$(basename "${target}")" "${target}"
         else
             echo "  Downloading $(basename "${target}")..."
-            curl -fsSL -o "${target}" "${url}"
+            curl -fL --retry 3 --retry-delay 2 -o "${target}" "${url}"
         fi
         chmod +x "${target}"
     fi
@@ -107,7 +111,9 @@ export APPIMAGE_EXTRACT_AND_RUN=1
 export QML_SOURCES_PATHS="${REPO_ROOT}/src/ui"
 export PATH="${TOOLS_DIR}:${PATH}"
 
-if command -v qmake6 &>/dev/null; then
+if [ -n "${QT_ROOT_DIR:-}" ] && [ -x "${QT_ROOT_DIR}/bin/qmake" ]; then
+    export QMAKE="${QT_ROOT_DIR}/bin/qmake"
+elif command -v qmake6 &>/dev/null; then
     export QMAKE="$(command -v qmake6)"
 elif command -v qmake &>/dev/null; then
     export QMAKE="$(command -v qmake)"
@@ -145,7 +151,7 @@ rm -rf "${PORTABLE_TMP}"
 
 # 8. Package Linux AppImage
 echo "==> Creating BeaxtyVPN-Linux-x86_64.AppImage..."
-ARCH=x86_64 "${TOOLS_DIR}/appimagetool" "${APPDIR}" "${DIST_DIR}/BeaxtyVPN-Linux-x86_64.AppImage"
+ARCH=x86_64 "${TOOLS_DIR}/appimagetool" --no-appstream "${APPDIR}" "${DIST_DIR}/BeaxtyVPN-Linux-x86_64.AppImage"
 
 # 9. Summary & Checksums
 echo "============================================================"

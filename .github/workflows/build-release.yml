@@ -27,7 +27,7 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.23'
+          go-version: 'stable'
           cache: false
 
       - name: Install system dependencies
@@ -39,14 +39,15 @@ jobs:
             libxkbcommon-dev libxkbcommon-x11-dev \
             libdbus-1-dev libpulse-dev libasound2-dev \
             libx11-xcb-dev libfontconfig1-dev libfreetype6-dev \
-            librsvg2-bin protobuf-compiler libprotobuf-dev
+            librsvg2-bin protobuf-compiler libprotobuf-dev \
+            libfuse2 file
 
       - name: Install Qt 6.8
         uses: jurplel/install-qt-action@v4
         with:
           version: '6.8.0'
           target: 'desktop'
-          arch: 'gcc_64'
+          arch: 'linux_gcc_64'
           modules: 'qtshadertools qt5compat'
 
       - name: Build Core Daemon
@@ -80,7 +81,7 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.23'
+          go-version: 'stable'
           cache: false
 
       - name: Setup MSVC Developer Command Prompt
@@ -126,10 +127,12 @@ jobs:
           New-Item -ItemType Directory -Force -Path $PortableDir
 
           # Copy main executable and core
-          if (Test-Path "build\BeaxtyVPN.exe") {
-            Copy-Item "build\BeaxtyVPN.exe" -Destination "$PortableDir\beaxty-vpn.exe"
-          } else {
+          if (Test-Path "build\Release\beaxty-vpn.exe") {
+            Copy-Item "build\Release\beaxty-vpn.exe" -Destination "$PortableDir\beaxty-vpn.exe"
+          } elseif (Test-Path "build\beaxty-vpn.exe") {
             Copy-Item "build\beaxty-vpn.exe" -Destination "$PortableDir\beaxty-vpn.exe"
+          } elseif (Test-Path "build\BeaxtyVPN.exe") {
+            Copy-Item "build\BeaxtyVPN.exe" -Destination "$PortableDir\beaxty-vpn.exe"
           }
           Copy-Item "bin\beaxty-core.exe" -Destination "$PortableDir\beaxty-core.exe"
 
@@ -164,7 +167,7 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.23'
+          go-version: 'stable'
           cache: false
 
       - name: Setup Ninja
