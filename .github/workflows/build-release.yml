@@ -1,0 +1,254 @@
+name: Build & Release Portable
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: 'Release tag to publish (e.g. v1.0.0)'
+        required: false
+        default: ''
+
+permissions:
+  contents: write
+
+jobs:
+  build-linux:
+    name: Linux (AppImage & Portable Tarball)
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+          cache: false
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential cmake ninja-build \
+            libgl1-mesa-dev libglx-dev libegl1-mesa-dev \
+            libxkbcommon-dev libxkbcommon-x11-dev \
+            libdbus-1-dev libpulse-dev libasound2-dev \
+            libx11-xcb-dev libfontconfig1-dev libfreetype6-dev \
+            librsvg2-bin protobuf-compiler libprotobuf-dev
+
+      - name: Install Qt 6.8
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: '6.8.0'
+          target: 'desktop'
+          arch: 'gcc_64'
+          modules: 'qtshadertools qt5compat'
+
+      - name: Build Core Daemon
+        run: |
+          chmod +x scripts/build_core.sh
+          ./scripts/build_core.sh
+
+      - name: Package Linux Artifacts
+        run: |
+          chmod +x scripts/package_linux.sh
+          ./scripts/package_linux.sh
+
+      - name: Upload Linux Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-artifacts
+          path: |
+            dist/BeaxtyVPN-Linux-x86_64.AppImage
+            dist/BeaxtyVPN-Linux-x86_64-Portable.tar.gz
+          if-no-files-found: error
+
+  build-windows:
+    name: Windows Portable (x86_64 ZIP)
+    runs-on: windows-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+          cache: false
+
+      - name: Setup MSVC Developer Command Prompt
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Setup Ninja
+        uses: ashutoshvarma/setup-ninja@v1.1
+        with:
+          version: '1.11.1'
+
+      - name: Install Qt 6.8
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: '6.8.0'
+          target: 'desktop'
+          arch: 'win64_msvc2022_64'
+          modules: 'qtshadertools qt5compat'
+
+      - name: Build Core Daemon (Windows)
+        shell: bash
+        run: |
+          cd 3rdparty/throne/core/server
+          mkdir -p ../../../../bin
+          VERSION_SINGBOX=$(go list -m -f '{{.Version}}' github.com/sagernet/sing-box)
+          TAGS="with_clash_api,with_gvisor,with_quic,with_wireguard,with_utls,with_dhcp,with_tailscale"
+          CGO_ENABLED=0 go build -v \
+            -trimpath \
+            -ldflags "-w -s -X 'github.com/sagernet/sing-box/constant.Version=${VERSION_SINGBOX}' -checklinkname=0" \
+            -tags "${TAGS}" \
+            -o ../../../../bin/beaxty-core.exe .
+
+      - name: Build BeaxtyVPN (Windows)
+        shell: bash
+        run: |
+          cmake -B build -S . -G "Ninja" -DCMAKE_BUILD_TYPE=Release
+          cmake --build build --config Release --target beaxty-vpn
+
+      - name: Package Windows Portable ZIP
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist
+          $PortableDir = "build\BeaxtyVPN-Windows-x86_64-Portable"
+          New-Item -ItemType Directory -Force -Path $PortableDir
+
+          # Copy main executable and core
+          if (Test-Path "build\BeaxtyVPN.exe") {
+            Copy-Item "build\BeaxtyVPN.exe" -Destination "$PortableDir\beaxty-vpn.exe"
+          } else {
+            Copy-Item "build\beaxty-vpn.exe" -Destination "$PortableDir\beaxty-vpn.exe"
+          }
+          Copy-Item "bin\beaxty-core.exe" -Destination "$PortableDir\beaxty-core.exe"
+
+          # Download Wintun driver DLL (v0.14.1)
+          Invoke-WebRequest -Uri "https://www.wintun.net/builds/wintun-0.14.1.zip" -OutFile "build\wintun.zip"
+          Expand-Archive -Path "build\wintun.zip" -DestinationPath "build\wintun_extracted" -Force
+          Copy-Item "build\wintun_extracted\wintun\bin\amd64\wintun.dll" -Destination "$PortableDir\wintun.dll"
+
+          # Deploy Qt dependencies and QML modules
+          windeployqt.exe --qmldir src/ui --no-translations --compiler-runtime "$PortableDir\beaxty-vpn.exe"
+
+          # Create ZIP archive
+          Compress-Archive -Path "$PortableDir\*" -DestinationPath "dist\BeaxtyVPN-Windows-x86_64-Portable.zip" -Force
+          Get-ChildItem -Path dist
+
+      - name: Upload Windows Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-artifacts
+          path: dist/BeaxtyVPN-Windows-x86_64-Portable.zip
+          if-no-files-found: error
+
+  build-macos:
+    name: macOS (DMG)
+    runs-on: macos-14
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+          cache: false
+
+      - name: Setup Ninja
+        run: brew install ninja
+
+      - name: Install Qt 6.8
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: '6.8.0'
+          target: 'desktop'
+          arch: 'clang_64'
+          modules: 'qtshadertools qt5compat'
+
+      - name: Build Core Daemon (macOS)
+        run: |
+          cd 3rdparty/throne/core/server
+          mkdir -p ../../../../bin
+          VERSION_SINGBOX=$(go list -m -f '{{.Version}}' github.com/sagernet/sing-box)
+          TAGS="with_clash_api,with_gvisor,with_quic,with_wireguard,with_utls,with_dhcp,with_tailscale"
+          CGO_ENABLED=1 go build -v \
+            -trimpath \
+            -ldflags "-w -s -X 'github.com/sagernet/sing-box/constant.Version=${VERSION_SINGBOX}' -checklinkname=0" \
+            -tags "${TAGS}" \
+            -o ../../../../bin/beaxty-core .
+          chmod +x ../../../../bin/beaxty-core
+
+      - name: Build BeaxtyVPN (macOS)
+        run: |
+          cmake -B build -S . -G "Ninja" -DCMAKE_BUILD_TYPE=Release
+          cmake --build build --config Release --target beaxty-vpn
+
+      - name: Package macOS DMG
+        run: |
+          mkdir -p dist
+          APP_BUNDLE="build/BeaxtyVPN.app"
+          if [ ! -d "${APP_BUNDLE}" ]; then
+            APP_BUNDLE="build/beaxty-vpn.app"
+          fi
+          
+          # Place core daemon into app bundle Resources
+          mkdir -p "${APP_BUNDLE}/Contents/Resources"
+          cp bin/beaxty-core "${APP_BUNDLE}/Contents/Resources/beaxty-core"
+          chmod +x "${APP_BUNDLE}/Contents/Resources/beaxty-core"
+
+          # Deploy Qt dependencies into the bundle
+          macdeployqt "${APP_BUNDLE}" -qmldir=src/ui
+
+          # Ad-hoc code sign bundle
+          codesign --force --deep --sign - "${APP_BUNDLE}"
+
+          # Create DMG
+          hdiutil create -volname "BeaxtyVPN" -srcfolder "${APP_BUNDLE}" -ov -format UDZO dist/BeaxtyVPN-macOS-Universal.dmg
+          ls -lh dist
+
+      - name: Upload macOS Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-artifacts
+          path: dist/BeaxtyVPN-macOS-Universal.dmg
+          if-no-files-found: error
+
+  release:
+    name: Publish GitHub Release
+    needs: [build-linux, build-windows, build-macos]
+    if: startsWith(github.ref, 'refs/tags/v') || github.event.inputs.release_tag != ''
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all workflow artifacts
+        uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+          path: release-files
+
+      - name: Generate Checksums
+        run: |
+          cd release-files
+          sha256sum * > SHA256SUMS.txt
+          ls -la
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.inputs.release_tag || github.ref_name }}
+          files: release-files/*
+          draft: false
+          prerelease: false
+          generate_release_notes: true

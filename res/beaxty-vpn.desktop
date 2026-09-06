@@ -1,0 +1,10 @@
+[Desktop Entry]
+Name=BeaxtyVPN
+Comment=Minimalist Monochrome Linux VPN Client (Throne Core)
+Exec=beaxty-vpn
+Icon=beaxty-vpn
+Terminal=false
+Type=Application
+Categories=Network;Security;
+Keywords=vpn;proxy;singbox;vless;shadowsocks;hysteria;
+StartupNotify=true

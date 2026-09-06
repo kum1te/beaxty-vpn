@@ -1,0 +1,68 @@
+# ====================================================================
+# Beaxty VPN - .gitignore
+# ====================================================================
+
+# Build artifacts and build directories
+build/
+cmake-build-*/
+out/
+bin/
+dist/
+AppDir/
+*.AppImage
+*.tar.gz
+*.zip
+*.dmg
+*.exe
+*.o
+*.a
+*.so
+*.dylib
+
+# Cache and temporary directories
+.cache/
+.tempmediaStorage/
+
+# Database, SQLite & storage files
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+cache.db
+throne.db
+*.lock
+
+# Logs and crash dumps
+*.log
+*.debug
+*.core
+*.dmp
+dump/
+
+# Media, test captures and screenshots
+*.png
+*.jpg
+*.jpeg
+bganim.mp4
+
+# Allow explicit resources if added
+!res/**/*.png
+!res/**/*.jpg
+!res/**/*.svg
+!res/**/*.ico
+
+# Developer environments & IDE configurations
+.vscode/
+.idea/
+.qtcreator/
+.claude/
+*.user
+*.user.*
+CMakeUserPresets.json
+
+# Operating System temporary files
+.DS_Store
+Thumbs.db
+desktop.ini

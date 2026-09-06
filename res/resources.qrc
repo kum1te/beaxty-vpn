@@ -1,0 +1,46 @@
+<RCC>
+    <qresource prefix="/qml">
+        <file alias="App.qml">../src/ui/qml/App.qml</file>
+        <file alias="components/Card.qml">../src/ui/qml/components/Card.qml</file>
+        <file alias="components/ConnectButton.qml">../src/ui/qml/components/ConnectButton.qml</file>
+        <file alias="components/PingBadge.qml">../src/ui/qml/components/PingBadge.qml</file>
+        <file alias="components/TrafficCard.qml">../src/ui/qml/components/TrafficCard.qml</file>
+        <file alias="components/ToggleSwitch.qml">../src/ui/qml/components/ToggleSwitch.qml</file>
+        <file alias="components/ActionButton.qml">../src/ui/qml/components/ActionButton.qml</file>
+        <file alias="components/SearchField.qml">../src/ui/qml/components/SearchField.qml</file>
+        <file alias="components/ToastNotification.qml">../src/ui/qml/components/ToastNotification.qml</file>
+        <file alias="components/ImportSheet.qml">../src/ui/qml/components/ImportSheet.qml</file>
+        <file alias="components/AmbientBackground.qml">../src/ui/qml/components/AmbientBackground.qml</file>
+        <file alias="components/NavItem.qml">../src/ui/qml/components/NavItem.qml</file>
+        <file alias="components/ToggleRow.qml">../src/ui/qml/components/ToggleRow.qml</file>
+        <file alias="components/PresetCard.qml">../src/ui/qml/components/PresetCard.qml</file>
+        <file alias="components/ServerRow.qml">../src/ui/qml/components/ServerRow.qml</file>
+        <file alias="components/EmptyState.qml">../src/ui/qml/components/EmptyState.qml</file>
+        <file alias="components/HalftoneWaveBackground.qml">../src/ui/qml/components/HalftoneWaveBackground.qml</file>
+        <file alias="views/DashboardView.qml">../src/ui/qml/views/DashboardView.qml</file>
+        <file alias="views/NodesView.qml">../src/ui/qml/views/NodesView.qml</file>
+        <file alias="views/RoutingView.qml">../src/ui/qml/views/RoutingView.qml</file>
+        <file alias="views/SettingsView.qml">../src/ui/qml/views/SettingsView.qml</file>
+    </qresource>
+    <qresource prefix="/shaders">
+        <file alias="halftone_wave.frag.qsb">shaders/halftone_wave.frag.qsb</file>
+    </qresource>
+    <qresource prefix="/icons">
+        <file alias="app_icon.svg">icons/app_icon.svg</file>
+        <file alias="vpn_shield.svg">icons/vpn_shield.svg</file>
+        <file alias="nodes_list.svg">icons/nodes_list.svg</file>
+        <file alias="routing_fork.svg">icons/routing_fork.svg</file>
+        <file alias="settings_gear.svg">icons/settings_gear.svg</file>
+        <file alias="arrow_down.svg">icons/arrow_down.svg</file>
+        <file alias="arrow_up.svg">icons/arrow_up.svg</file>
+        <file alias="power.svg">icons/power.svg</file>
+        <file alias="clipboard.svg">icons/clipboard.svg</file>
+        <file alias="plus.svg">icons/plus.svg</file>
+        <file alias="check.svg">icons/check.svg</file>
+        <file alias="close.svg">icons/close.svg</file>
+        <file alias="search.svg">icons/search.svg</file>
+        <file alias="trash.svg">icons/trash.svg</file>
+        <file alias="refresh.svg">icons/refresh.svg</file>
+        <file alias="edit.svg">icons/edit.svg</file>
+    </qresource>
+</RCC>
