@@ -142,7 +142,8 @@ jobs:
           Copy-Item "build\wintun_extracted\wintun\bin\amd64\wintun.dll" -Destination "$PortableDir\wintun.dll"
 
           # Deploy Qt dependencies and QML modules
-          windeployqt.exe --qmldir src/ui --no-translations --compiler-runtime "$PortableDir\beaxty-vpn.exe"
+          $Windeployqt = if (Get-Command windeployqt.exe -ErrorAction SilentlyContinue) { "windeployqt.exe" } else { "$env:QT_ROOT_DIR\bin\windeployqt.exe" }
+          & $Windeployqt --release --qmldir src/ui --no-translations --compiler-runtime "$PortableDir\beaxty-vpn.exe"
 
           # Create ZIP archive
           Compress-Archive -Path "$PortableDir\*" -DestinationPath "dist\BeaxtyVPN-Windows-x86_64-Portable.zip" -Force
@@ -213,7 +214,11 @@ jobs:
           chmod +x "${APP_BUNDLE}/Contents/Resources/beaxty-core"
 
           # Deploy Qt dependencies into the bundle
-          macdeployqt "${APP_BUNDLE}" -qmldir=src/ui
+          MACDEPLOYQT="macdeployqt"
+          if [ -n "${QT_ROOT_DIR:-}" ] && [ -x "${QT_ROOT_DIR}/bin/macdeployqt" ]; then
+            MACDEPLOYQT="${QT_ROOT_DIR}/bin/macdeployqt"
+          fi
+          "${MACDEPLOYQT}" "${APP_BUNDLE}" -qmldir=src/ui
 
           # Ad-hoc code sign bundle
           codesign --force --deep --sign - "${APP_BUNDLE}"
