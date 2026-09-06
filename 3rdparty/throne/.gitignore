@@ -86,5 +86,4 @@ CMakeLists.txt.user*
 .vs
 out
 /libs
-srslist.h
 .claude
