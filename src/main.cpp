@@ -24,6 +24,7 @@
 #include "src/core/ToastManager.hpp"
 #include "src/core/LocalizationManager.hpp"
 #include "src/core/AutostartManager.hpp"
+#include "src/core/AppPrefs.hpp"
 #include "src/ui/Theme.hpp"
 #include "src/bridge/MainWindowBridge.hpp"
 
@@ -130,6 +131,7 @@ int main(int argc, char *argv[]) {
     TrafficMonitor trafficMonitor;
     LocalizationManager locManager;
     AutostartManager autostartManager;
+    AppPrefsService appPrefsService;
     // Wire headless bridge callbacks to facade managers
     BridgeCallbacks::onProfileStart = [&](int id) {
         if (id >= 0) configAdapter.selectServer(id);
@@ -199,6 +201,8 @@ int main(int argc, char *argv[]) {
     qmlEngine.rootContext()->setContextProperty(QStringLiteral("locManager"), &locManager);
     qmlEngine.rootContext()->setContextProperty(QStringLiteral("i18n"), &locManager);
     qmlEngine.rootContext()->setContextProperty(QStringLiteral("autostartManager"), &autostartManager);
+    qmlEngine.rootContext()->setContextProperty(QStringLiteral("appPrefs"), &appPrefsService);
+    qmlEngine.rootContext()->setContextProperty(QStringLiteral("AppPrefs"), &appPrefsService);
 
     // Load main QML file from resource or local file
     const QUrl url(QStringLiteral("qrc:/qml/App.qml"));

@@ -219,7 +219,7 @@ Item {
                                             height: 17
                                             sourceSize.width: 17
                                             sourceSize.height: 17
-                                            source: "qrc:/icons/nodes_list.svg"
+                                            source: Theme.icon("qrc:/icons/nodes_list.svg", Theme.isDark)
                                         }
                                     }
 
@@ -258,7 +258,7 @@ Item {
                                                     height: 11
                                                     sourceSize.width: 11
                                                     sourceSize.height: 11
-                                                    source: "qrc:/icons/edit.svg"
+                                                    source: Theme.icon("qrc:/icons/edit.svg", Theme.isDark)
                                                     opacity: editNameArea.containsMouse ? 1.0 : 0.65
                                                 }
 
@@ -363,7 +363,7 @@ Item {
                                             height: 14
                                             sourceSize.width: 14
                                             sourceSize.height: 14
-                                            source: "qrc:/icons/refresh.svg"
+                                            source: Theme.icon("qrc:/icons/refresh.svg", Theme.isDark)
                                             opacity: refreshArea.containsMouse ? 1.0 : 0.7
 
                                             RotationAnimation {
@@ -413,7 +413,7 @@ Item {
                                             height: 14
                                             sourceSize.width: 14
                                             sourceSize.height: 14
-                                            source: "qrc:/icons/trash.svg"
+                                            source: Theme.icon("qrc:/icons/trash.svg", Theme.isDark)
                                             opacity: delGroupArea.containsMouse ? 1.0 : 0.6
                                         }
 
@@ -733,7 +733,7 @@ Item {
                                         height: 17
                                         sourceSize.width: 17
                                         sourceSize.height: 17
-                                        source: "qrc:/icons/nodes_list.svg"
+                                        source: Theme.icon("qrc:/icons/nodes_list.svg", Theme.isDark)
                                     }
                                 }
 
@@ -1001,7 +1001,7 @@ Item {
                         height: 12
                         sourceSize.width: 12
                         sourceSize.height: 12
-                        source: "qrc:/icons/close.svg"
+                        source: Theme.icon("qrc:/icons/close.svg", Theme.isDark)
                         opacity: closeArea.containsMouse ? 1.0 : 0.6
                     }
 
@@ -1152,7 +1152,7 @@ Item {
                         height: 12
                         sourceSize.width: 12
                         sourceSize.height: 12
-                        source: "qrc:/icons/close.svg"
+                        source: Theme.icon("qrc:/icons/close.svg", Theme.isDark)
                         opacity: delCloseArea.containsMouse ? 1.0 : 0.6
                     }
 

@@ -34,7 +34,7 @@ Card {
                     Image {
                         width: 11
                         height: 11
-                        source: "qrc:/icons/arrow_down.svg"
+                        source: Theme.icon("qrc:/icons/arrow_down.svg", Theme.isDark)
                         anchors.verticalCenter: parent.verticalCenter
                         opacity: 0.7
                     }
@@ -84,7 +84,7 @@ Card {
                     Image {
                         width: 11
                         height: 11
-                        source: "qrc:/icons/arrow_up.svg"
+                        source: Theme.icon("qrc:/icons/arrow_up.svg", Theme.isDark)
                         anchors.verticalCenter: parent.verticalCenter
                         opacity: 0.7
                     }

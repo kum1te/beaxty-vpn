@@ -2,6 +2,7 @@
 // Copyright (C) 2026 BeaxtyVPN Authors
 
 import QtQuick
+import QtQuick.Controls
 import QtQuick.Layouts
 import ".."
 
@@ -13,6 +14,7 @@ Rectangle {
     property string label: ""
     property url iconSource: ""
     property bool active: false
+    property bool collapsed: false
 
     signal clicked()
 
@@ -41,28 +43,55 @@ Rectangle {
 
     RowLayout {
         anchors.fill: parent
-        anchors.leftMargin: 14
-        anchors.rightMargin: 14
-        spacing: 12
+        anchors.leftMargin: root.collapsed ? 0 : 14
+        anchors.rightMargin: root.collapsed ? 0 : 14
+        spacing: root.collapsed ? 0 : 12
+
+        Behavior on anchors.leftMargin { NumberAnimation { duration: 200 } }
+        Behavior on anchors.rightMargin { NumberAnimation { duration: 200 } }
 
         Image {
             Layout.preferredWidth: 18
             Layout.preferredHeight: 18
+            Layout.alignment: root.collapsed ? Qt.AlignHCenter : Qt.AlignVCenter
             sourceSize.width: 18
             sourceSize.height: 18
-            source: root.iconSource
+            source: Theme.icon(root.iconSource, Theme.isDark)
             opacity: root.active ? 1.0 : (mouseArea.containsMouse ? 0.75 : 0.5)
             Behavior on opacity { NumberAnimation { duration: 150 } }
         }
 
         Text {
-            Layout.fillWidth: true
+            Layout.fillWidth: !root.collapsed
+            visible: opacity > 0.01
+            opacity: root.collapsed ? 0.0 : 1.0
             text: root.label
             elide: Text.ElideRight
             color: root.active ? Theme.textPrimary : Theme.textSecondary
             font.pixelSize: 13
             font.bold: root.active
             Behavior on color { ColorAnimation { duration: 150 } }
+            Behavior on opacity { NumberAnimation { duration: 180 } }
+        }
+    }
+
+    ToolTip {
+        id: navToolTip
+        visible: root.collapsed && mouseArea.containsMouse
+        text: root.label
+        delay: 250
+        timeout: 3000
+        contentItem: Text {
+            text: navToolTip.text
+            color: Theme.textPrimary
+            font.pixelSize: 12
+            font.bold: true
+        }
+        background: Rectangle {
+            color: Theme.cardBg
+            border.color: Theme.cardBorder
+            border.width: 1
+            radius: 6
         }
     }
 

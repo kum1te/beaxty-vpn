@@ -34,8 +34,8 @@ Rectangle {
             Layout.preferredHeight: 36
             sourceSize.width: 36
             sourceSize.height: 36
-            source: root.iconSource
-            opacity: 0.3
+            source: Theme.icon(root.iconSource, Theme.isDark)
+            opacity: 0.35
         }
 
         Text {

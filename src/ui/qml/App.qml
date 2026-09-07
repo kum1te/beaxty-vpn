@@ -4,6 +4,7 @@
 import QtQuick
 import QtQuick.Window
 import QtQuick.Layouts
+import QtQuick.Controls
 import "views"
 import "components"
 
@@ -68,6 +69,14 @@ Window {
         z: 0
     }
 
+    property bool sidebarCollapsed: (typeof appPrefs !== "undefined") ? appPrefs.sidebarCollapsed : false
+    function toggleSidebar() {
+        sidebarCollapsed = !sidebarCollapsed;
+        if (typeof appPrefs !== "undefined") {
+            appPrefs.sidebarCollapsed = sidebarCollapsed;
+        }
+    }
+
     RowLayout {
         z: 1
         anchors.fill: parent
@@ -78,9 +87,14 @@ Window {
         // ==========================================
         Rectangle {
             id: sidebar
-            Layout.preferredWidth: 220
+            Layout.preferredWidth: window.sidebarCollapsed ? 68 : 220
             Layout.fillHeight: true
-            color: Theme.isDark ? "#E608080A" : "#FFFFFF"
+            color: Theme.isDark ? "#E608080A" : "#FAFAFA"
+            clip: true
+
+            Behavior on Layout.preferredWidth {
+                NumberAnimation { duration: 220; easing.type: Easing.OutCubic }
+            }
 
             // Right border line
             Rectangle {
@@ -101,15 +115,19 @@ Window {
 
                     RowLayout {
                         anchors.fill: parent
-                        anchors.leftMargin: 20
-                        anchors.rightMargin: 16
-                        spacing: 12
+                        anchors.leftMargin: window.sidebarCollapsed ? Math.round((parent.width - 34) / 2) : 16
+                        anchors.rightMargin: window.sidebarCollapsed ? Math.round((parent.width - 34) / 2) : 12
+                        spacing: window.sidebarCollapsed ? 0 : 10
+
+                        Behavior on anchors.leftMargin { NumberAnimation { duration: 220; easing.type: Easing.OutCubic } }
+                        Behavior on anchors.rightMargin { NumberAnimation { duration: 220; easing.type: Easing.OutCubic } }
 
                         Rectangle {
+                            id: logoBadge
                             width: 34
                             height: 34
                             radius: 9
-                            color: Theme.cardBg
+                            color: Theme.isDark ? Theme.cardBg : Theme.cardHover
                             border.color: Theme.cardBorder
                             border.width: 1
 
@@ -117,8 +135,40 @@ Window {
                                 anchors.centerIn: parent
                                 width: 20
                                 height: 20
-                                source: "qrc:/icons/app_icon.svg"
+                                source: Theme.icon("qrc:/icons/app_icon.svg", Theme.isDark)
                                 fillMode: Image.PreserveAspectFit
+                            }
+
+                            MouseArea {
+                                id: logoMouseArea
+                                anchors.fill: parent
+                                hoverEnabled: window.sidebarCollapsed
+                                cursorShape: window.sidebarCollapsed ? Qt.PointingHandCursor : Qt.ArrowCursor
+                                onClicked: {
+                                    if (window.sidebarCollapsed) {
+                                        window.toggleSidebar();
+                                    }
+                                }
+                            }
+
+                            ToolTip {
+                                id: logoToolTip
+                                visible: window.sidebarCollapsed && logoMouseArea.containsMouse
+                                text: qsTr("Развернуть панель")
+                                delay: 300
+                                timeout: 2500
+                                contentItem: Text {
+                                    text: logoToolTip.text
+                                    color: Theme.textPrimary
+                                    font.pixelSize: 12
+                                    font.bold: true
+                                }
+                                background: Rectangle {
+                                    color: Theme.cardBg
+                                    border.color: Theme.cardBorder
+                                    border.width: 1
+                                    radius: 6
+                                }
                             }
                         }
 
@@ -126,6 +176,9 @@ Window {
                             Layout.fillWidth: true
                             spacing: 5
                             Layout.alignment: Qt.AlignVCenter
+                            visible: opacity > 0.01
+                            opacity: window.sidebarCollapsed ? 0.0 : 1.0
+                            Behavior on opacity { NumberAnimation { duration: 180 } }
 
                             Text {
                                 text: "beaxty"
@@ -144,16 +197,70 @@ Window {
                                 font.letterSpacing: 1.2
                             }
                         }
+
+                        // Header Toggle Button (visible when expanded)
+                        Rectangle {
+                            id: headerToggleBtn
+                            Layout.preferredWidth: 28
+                            Layout.preferredHeight: 28
+                            Layout.alignment: Qt.AlignVCenter
+                            radius: 6
+                            visible: opacity > 0.01
+                            opacity: window.sidebarCollapsed ? 0.0 : 1.0
+                            Behavior on opacity { NumberAnimation { duration: 180 } }
+                            color: headerToggleMa.containsMouse ? Theme.cardHover : "transparent"
+                            border.color: headerToggleMa.containsMouse ? Theme.cardBorder : "transparent"
+                            border.width: 1
+
+                            Image {
+                                anchors.centerIn: parent
+                                width: 16
+                                height: 16
+                                source: Theme.icon("qrc:/icons/sidebar_toggle.svg", Theme.isDark)
+                                opacity: headerToggleMa.containsMouse ? 1.0 : 0.6
+                                Behavior on opacity { NumberAnimation { duration: 150 } }
+                            }
+
+                            MouseArea {
+                                id: headerToggleMa
+                                anchors.fill: parent
+                                hoverEnabled: true
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: window.toggleSidebar()
+                            }
+
+                            ToolTip {
+                                id: headerToggleTip
+                                visible: headerToggleMa.containsMouse && !window.sidebarCollapsed
+                                text: qsTr("Свернуть панель")
+                                delay: 300
+                                timeout: 2500
+                                contentItem: Text {
+                                    text: headerToggleTip.text
+                                    color: Theme.textPrimary
+                                    font.pixelSize: 12
+                                    font.bold: true
+                                }
+                                background: Rectangle {
+                                    color: Theme.cardBg
+                                    border.color: Theme.cardBorder
+                                    border.width: 1
+                                    radius: 6
+                                }
+                            }
+                        }
                     }
 
                     Rectangle {
                         anchors.bottom: parent.bottom
                         anchors.left: parent.left
                         anchors.right: parent.right
-                        anchors.leftMargin: 16
-                        anchors.rightMargin: 16
+                        anchors.leftMargin: window.sidebarCollapsed ? 8 : 16
+                        anchors.rightMargin: window.sidebarCollapsed ? 8 : 16
                         height: 1
                         color: Theme.separator
+                        Behavior on anchors.leftMargin { NumberAnimation { duration: 200 } }
+                        Behavior on anchors.rightMargin { NumberAnimation { duration: 200 } }
                     }
                 }
 
@@ -162,9 +269,12 @@ Window {
                 // 2. Vertical Navigation Menu
                 ColumnLayout {
                     Layout.fillWidth: true
-                    Layout.leftMargin: 12
-                    Layout.rightMargin: 12
+                    Layout.leftMargin: window.sidebarCollapsed ? 8 : 12
+                    Layout.rightMargin: window.sidebarCollapsed ? 8 : 12
                     spacing: 6
+
+                    Behavior on Layout.leftMargin { NumberAnimation { duration: 200 } }
+                    Behavior on Layout.rightMargin { NumberAnimation { duration: 200 } }
 
                     Repeater {
                         model: [
@@ -182,12 +292,87 @@ Window {
                             label: modelData.label
                             iconSource: modelData.icon
                             active: viewStack.currentIndex === index
+                            collapsed: window.sidebarCollapsed
                             onClicked: viewStack.currentIndex = index
                         }
                     }
                 }
 
                 Item { Layout.fillHeight: true }
+
+                // Sidebar Collapse Toggle Button (in bottom section)
+                Rectangle {
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: 38
+                    Layout.leftMargin: window.sidebarCollapsed ? 8 : 12
+                    Layout.rightMargin: window.sidebarCollapsed ? 8 : 12
+                    Layout.bottomMargin: 8
+                    radius: 8
+                    color: toggleRowMa.containsMouse ? Theme.cardHover : "transparent"
+                    border.color: toggleRowMa.containsMouse ? Theme.cardBorder : "transparent"
+                    border.width: 1
+
+                    Behavior on color { ColorAnimation { duration: 150 } }
+                    Behavior on border.color { ColorAnimation { duration: 150 } }
+
+                    RowLayout {
+                        anchors.fill: parent
+                        anchors.leftMargin: window.sidebarCollapsed ? 0 : 14
+                        anchors.rightMargin: window.sidebarCollapsed ? 0 : 14
+                        spacing: window.sidebarCollapsed ? 0 : 12
+
+                        Image {
+                            Layout.preferredWidth: 16
+                            Layout.preferredHeight: 16
+                            Layout.alignment: window.sidebarCollapsed ? Qt.AlignHCenter : Qt.AlignVCenter
+                            source: Theme.icon("qrc:/icons/sidebar_toggle.svg", Theme.isDark)
+                            rotation: window.sidebarCollapsed ? 180 : 0
+                            opacity: toggleRowMa.containsMouse ? 1.0 : 0.6
+                            Behavior on rotation { NumberAnimation { duration: 220; easing.type: Easing.OutCubic } }
+                            Behavior on opacity { NumberAnimation { duration: 150 } }
+                        }
+
+                        Text {
+                            Layout.fillWidth: !window.sidebarCollapsed
+                            visible: opacity > 0.01
+                            opacity: window.sidebarCollapsed ? 0.0 : 1.0
+                            text: qsTr("Свернуть")
+                            color: Theme.textSecondary
+                            font.pixelSize: 13
+                            font.bold: false
+                            elide: Text.ElideRight
+                            Behavior on opacity { NumberAnimation { duration: 180 } }
+                        }
+                    }
+
+                    MouseArea {
+                        id: toggleRowMa
+                        anchors.fill: parent
+                        hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: window.toggleSidebar()
+                    }
+
+                    ToolTip {
+                        id: toggleRowTip
+                        visible: window.sidebarCollapsed && toggleRowMa.containsMouse
+                        text: qsTr("Развернуть панель")
+                        delay: 250
+                        timeout: 2500
+                        contentItem: Text {
+                            text: toggleRowTip.text
+                            color: Theme.textPrimary
+                            font.pixelSize: 12
+                            font.bold: true
+                        }
+                        background: Rectangle {
+                            color: Theme.cardBg
+                            border.color: Theme.cardBorder
+                            border.width: 1
+                            radius: 6
+                        }
+                    }
+                }
 
                 // 3. Sidebar Bottom Status Footer
                 Rectangle {
@@ -203,12 +388,16 @@ Window {
 
                     RowLayout {
                         anchors.fill: parent
-                        anchors.leftMargin: 16
-                        anchors.rightMargin: 16
-                        spacing: 10
+                        anchors.leftMargin: window.sidebarCollapsed ? 0 : 16
+                        anchors.rightMargin: window.sidebarCollapsed ? 0 : 16
+                        spacing: window.sidebarCollapsed ? 0 : 10
+
+                        Behavior on anchors.leftMargin { NumberAnimation { duration: 200 } }
+                        Behavior on anchors.rightMargin { NumberAnimation { duration: 200 } }
 
                         // Status dot
                         Rectangle {
+                            Layout.alignment: window.sidebarCollapsed ? Qt.AlignHCenter : Qt.AlignVCenter
                             width: 10
                             height: 10
                             radius: 5
@@ -226,8 +415,11 @@ Window {
                         }
 
                         ColumnLayout {
-                            Layout.fillWidth: true
+                            Layout.fillWidth: !window.sidebarCollapsed
+                            visible: opacity > 0.01
+                            opacity: window.sidebarCollapsed ? 0.0 : 1.0
                             spacing: 1
+                            Behavior on opacity { NumberAnimation { duration: 180 } }
 
                             Text {
                                 text: (typeof throneEngine !== "undefined") ? throneEngine.stateString : "DISCONNECTED"
@@ -247,12 +439,15 @@ Window {
 
                         // TUN Badge
                         Rectangle {
+                            visible: opacity > 0.01
+                            opacity: window.sidebarCollapsed ? 0.0 : 1.0
                             height: 20
                             width: 44
                             radius: 10
                             color: Theme.cardBg
                             border.color: Theme.cardBorder
                             border.width: 1
+                            Behavior on opacity { NumberAnimation { duration: 180 } }
 
                             Text {
                                 anchors.centerIn: parent
@@ -261,6 +456,36 @@ Window {
                                 font.pixelSize: 8
                                 font.bold: true
                             }
+                        }
+                    }
+
+                    MouseArea {
+                        id: statusFooterMa
+                        anchors.fill: parent
+                        hoverEnabled: window.sidebarCollapsed
+                        cursorShape: window.sidebarCollapsed ? Qt.PointingHandCursor : Qt.ArrowCursor
+                        onClicked: {
+                            if (window.sidebarCollapsed) window.toggleSidebar()
+                        }
+                    }
+
+                    ToolTip {
+                        id: footerStatusTip
+                        visible: window.sidebarCollapsed && statusFooterMa.containsMouse
+                        text: (typeof throneEngine !== "undefined") ? (throneEngine.stateString + (throneEngine.tunModeEnabled ? " • TUN" : " • PROXY")) : "DISCONNECTED"
+                        delay: 250
+                        timeout: 3000
+                        contentItem: Text {
+                            text: footerStatusTip.text
+                            color: Theme.textPrimary
+                            font.pixelSize: 12
+                            font.bold: true
+                        }
+                        background: Rectangle {
+                            color: Theme.cardBg
+                            border.color: Theme.cardBorder
+                            border.width: 1
+                            radius: 6
                         }
                     }
                 }

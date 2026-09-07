@@ -429,7 +429,7 @@ Item {
                                     height: 12
                                     sourceSize.width: 12
                                     sourceSize.height: 12
-                                    source: "qrc:/icons/clipboard.svg"
+                                    source: Theme.icon("qrc:/icons/clipboard.svg", Theme.isDark)
                                     opacity: 0.8
                                 }
 
@@ -706,7 +706,7 @@ Item {
                             Layout.preferredWidth: 36
                             Layout.preferredHeight: 36
                             radius: 10
-                            color: Theme.cardHover
+                            color: Theme.isDark ? Theme.cardBg : Theme.cardHover
                             border.color: Theme.cardBorder
                             border.width: 1
 
@@ -716,7 +716,7 @@ Item {
                                 height: 22
                                 sourceSize.width: 22
                                 sourceSize.height: 22
-                                source: "qrc:/icons/app_icon.svg"
+                                source: Theme.icon("qrc:/icons/app_icon.svg", Theme.isDark)
                                 fillMode: Image.PreserveAspectFit
                             }
                         }

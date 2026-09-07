@@ -81,6 +81,8 @@ public:
     int themeMode() const;
     Q_INVOKABLE void setThemeMode(int mode);
     bool isDark() const;
+    Q_INVOKABLE QString icon(const QString &path, bool isDark) const;
+    Q_INVOKABLE QString icon(const QString &path) const;
 
     QColor bgDark() const;
     QColor bgElevated() const;

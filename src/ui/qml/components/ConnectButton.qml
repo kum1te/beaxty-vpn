@@ -150,7 +150,14 @@ Item {
         visible: root.connectionState === 1
 
         Canvas {
+            id: connectingArcCanvas
             anchors.fill: parent
+            Connections {
+                target: Theme
+                function onThemeChanged() {
+                    connectingArcCanvas.requestPaint();
+                }
+            }
             onPaint: {
                 var ctx = getContext("2d");
                 ctx.reset();
@@ -160,7 +167,7 @@ Item {
 
                 ctx.beginPath();
                 ctx.arc(cx, cy, r, -Math.PI / 2, Math.PI / 4, false);
-                ctx.strokeStyle = "#FFFFFF";
+                ctx.strokeStyle = Theme.textPrimary.toString();
                 ctx.lineWidth = 3.5;
                 ctx.lineCap = "round";
                 ctx.stroke();

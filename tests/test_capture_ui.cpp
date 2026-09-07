@@ -21,6 +21,7 @@
 #include "src/core/TrafficMonitor.hpp"
 #include "src/core/ToastManager.hpp"
 #include "src/core/LocalizationManager.hpp"
+#include "src/core/AppPrefs.hpp"
 #include "src/ui/Theme.hpp"
 #include "src/bridge/MainWindowBridge.hpp"
 
@@ -43,6 +44,7 @@ int main(int argc, char *argv[]) {
     ConfigAdapter configAdapter;
     TrafficMonitor trafficMonitor;
     LocalizationManager locManager;
+    AppPrefsService appPrefsService;
 
     QString dbPath = QStringLiteral("/tmp/test_capture_ui.db");
     if (QFile::exists(dbPath)) QFile::remove(dbPath);
@@ -64,6 +66,8 @@ int main(int argc, char *argv[]) {
     locManager.initialize(&qmlEngine);
     qmlEngine.rootContext()->setContextProperty(QStringLiteral("locManager"), &locManager);
     qmlEngine.rootContext()->setContextProperty(QStringLiteral("i18n"), &locManager);
+    qmlEngine.rootContext()->setContextProperty(QStringLiteral("appPrefs"), &appPrefsService);
+    qmlEngine.rootContext()->setContextProperty(QStringLiteral("AppPrefs"), &appPrefsService);
 
     qmlEngine.addImportPath(QStringLiteral("qrc:/qml"));
     qmlEngine.load(QUrl(QStringLiteral("qrc:/qml/App.qml")));
@@ -135,6 +139,14 @@ int main(int argc, char *argv[]) {
     steps->push_back({[&]() {
         grab("build/beaxty_dashboard_1920x1080.png");
         window->resize(960, 640);
+        // Test collapsed sidebar
+        appPrefsService.setBool(QStringLiteral("sidebar_collapsed"), true);
+    }, 450});
+
+    // 4b. Dashboard with Collapsed Sidebar: 960x640
+    steps->push_back({[&]() {
+        grab("build/beaxty_dashboard_collapsed.png");
+        appPrefsService.setBool(QStringLiteral("sidebar_collapsed"), false);
         engine.toggleConnect();
     }, 450});
 
@@ -308,6 +320,25 @@ int main(int argc, char *argv[]) {
     // 16. Dashboard Light Theme: 960x640
     steps->push_back({[&]() {
         grab("build/beaxty_light_dashboard.png");
+        appPrefsService.setBool(QStringLiteral("sidebar_collapsed"), true);
+    }, 450});
+
+    // 16b. Dashboard Light Theme Collapsed Sidebar
+    steps->push_back({[&]() {
+        grab("build/beaxty_light_dashboard_collapsed.png");
+        appPrefsService.setBool(QStringLiteral("sidebar_collapsed"), false);
+        setView(1); // Nodes View in Light Theme
+    }, 450});
+
+    // 16c. Nodes View Light Theme
+    steps->push_back({[&]() {
+        grab("build/beaxty_light_nodes.png");
+        setView(2); // Routing View in Light Theme
+    }, 450});
+
+    // 16d. Routing View Light Theme
+    steps->push_back({[&]() {
+        grab("build/beaxty_light_routing.png");
         setView(3); // Settings View in Light Theme
     }, 450});
 

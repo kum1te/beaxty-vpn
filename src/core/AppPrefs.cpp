@@ -88,3 +88,67 @@ void setInt(const QString &key, int value) {
 }
 
 } // namespace AppPrefs
+
+AppPrefsService *AppPrefsService::s_instance = nullptr;
+
+AppPrefsService::AppPrefsService(QObject *parent)
+    : QObject(parent)
+{
+    s_instance = this;
+    m_sidebarCollapsed = AppPrefs::getBool(QStringLiteral("sidebar_collapsed"), false);
+}
+
+AppPrefsService *AppPrefsService::instance() {
+    return s_instance;
+}
+
+bool AppPrefsService::sidebarCollapsed() const {
+    return m_sidebarCollapsed;
+}
+
+void AppPrefsService::setSidebarCollapsed(bool collapsed) {
+    if (m_sidebarCollapsed != collapsed) {
+        m_sidebarCollapsed = collapsed;
+        AppPrefs::setBool(QStringLiteral("sidebar_collapsed"), collapsed);
+        emit sidebarCollapsedChanged();
+        emit prefChanged(QStringLiteral("sidebar_collapsed"));
+    }
+}
+
+bool AppPrefsService::has(const QString &key) const {
+    return AppPrefs::has(key);
+}
+
+QString AppPrefsService::getString(const QString &key, const QString &fallback) const {
+    return AppPrefs::getString(key, fallback);
+}
+
+void AppPrefsService::setString(const QString &key, const QString &value) {
+    AppPrefs::setString(key, value);
+    emit prefChanged(key);
+}
+
+bool AppPrefsService::getBool(const QString &key, bool fallback) const {
+    if (key == QStringLiteral("sidebar_collapsed")) {
+        return m_sidebarCollapsed;
+    }
+    return AppPrefs::getBool(key, fallback);
+}
+
+void AppPrefsService::setBool(const QString &key, bool value) {
+    if (key == QStringLiteral("sidebar_collapsed")) {
+        setSidebarCollapsed(value);
+        return;
+    }
+    AppPrefs::setBool(key, value);
+    emit prefChanged(key);
+}
+
+int AppPrefsService::getInt(const QString &key, int fallback) const {
+    return AppPrefs::getInt(key, fallback);
+}
+
+void AppPrefsService::setInt(const QString &key, int value) {
+    AppPrefs::setInt(key, value);
+    emit prefChanged(key);
+}

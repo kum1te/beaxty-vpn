@@ -265,7 +265,7 @@ Item {
                                                 height: 12
                                                 sourceSize.width: 12
                                                 sourceSize.height: 12
-                                                source: "qrc:/icons/trash.svg"
+                                                source: Theme.icon("qrc:/icons/trash.svg", Theme.isDark)
                                                 opacity: deleteDomainArea.containsMouse ? 0.9 : 0.45
                                                 Behavior on opacity { NumberAnimation { duration: Theme.durationFast } }
                                             }
@@ -566,7 +566,7 @@ Item {
                                                 height: 12
                                                 sourceSize.width: 12
                                                 sourceSize.height: 12
-                                                source: "qrc:/icons/trash.svg"
+                                                source: Theme.icon("qrc:/icons/trash.svg", Theme.isDark)
                                                 opacity: delAdvArea.containsMouse ? 0.9 : 0.45
                                                 Behavior on opacity { NumberAnimation { duration: Theme.durationFast } }
                                             }
@@ -913,7 +913,7 @@ Item {
                             Layout.preferredHeight: 14
                             sourceSize.width: 14
                             sourceSize.height: 14
-                            source: "qrc:/icons/search.svg"
+                            source: Theme.icon("qrc:/icons/search.svg", Theme.isDark)
                             opacity: 0.5
                         }
 

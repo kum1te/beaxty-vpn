@@ -5,6 +5,7 @@
 #include "src/core/AppPrefs.hpp"
 #include <QGuiApplication>
 #include <QStyleHints>
+#include <QFile>
 #include <QDebug>
 
 Theme *Theme::s_instance = nullptr;
@@ -48,6 +49,41 @@ bool Theme::isDark() const {
         return QGuiApplication::styleHints()->colorScheme() != Qt::ColorScheme::Light;
     }
     return true;
+}
+
+QString Theme::icon(const QString &path, bool dark) const {
+    if (path.isEmpty()) {
+        return path;
+    }
+    if (dark) {
+        if (path.endsWith(QLatin1String("_dark.svg"))) {
+            QString standardPath = path.left(path.length() - 9) + QStringLiteral(".svg");
+            QString resPath = standardPath;
+            if (resPath.startsWith(QLatin1String("qrc:/"))) {
+                resPath = QStringLiteral(":") + resPath.mid(4);
+            }
+            if (QFile::exists(resPath)) {
+                return standardPath;
+            }
+        }
+        return path;
+    } else {
+        if (!path.endsWith(QLatin1String("_dark.svg")) && path.endsWith(QLatin1String(".svg"))) {
+            QString darkPath = path.left(path.length() - 4) + QStringLiteral("_dark.svg");
+            QString resPath = darkPath;
+            if (resPath.startsWith(QLatin1String("qrc:/"))) {
+                resPath = QStringLiteral(":") + resPath.mid(4);
+            }
+            if (QFile::exists(resPath)) {
+                return darkPath;
+            }
+        }
+        return path;
+    }
+}
+
+QString Theme::icon(const QString &path) const {
+    return icon(path, isDark());
 }
 
 QColor Theme::bgDark() const {

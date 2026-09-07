@@ -125,7 +125,7 @@ Item {
                         anchors.centerIn: parent
                         width: 14
                         height: 14
-                        source: "qrc:/icons/close.svg"
+                        source: Theme.icon("qrc:/icons/close.svg", Theme.isDark)
                         opacity: closeMa.containsMouse ? 0.9 : 0.5
                     }
 
@@ -217,7 +217,7 @@ Item {
                             Image {
                                 width: 12
                                 height: 12
-                                source: "qrc:/icons/clipboard.svg"
+                                source: Theme.icon("qrc:/icons/clipboard.svg", Theme.isDark)
                                 anchors.verticalCenter: parent.verticalCenter
                                 opacity: pasteArea.containsMouse ? 0.9 : 0.6
                             }

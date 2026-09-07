@@ -212,7 +212,7 @@ Rectangle {
                 height: 14
                 sourceSize.width: 14
                 sourceSize.height: 14
-                source: "qrc:/icons/trash.svg"
+                source: Theme.icon("qrc:/icons/trash.svg", Theme.isDark)
                 opacity: deleteArea.containsMouse ? 0.9 : 0.4
                 Behavior on opacity { NumberAnimation { duration: Theme.durationFast } }
             }

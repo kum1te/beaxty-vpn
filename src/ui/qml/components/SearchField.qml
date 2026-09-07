@@ -28,7 +28,7 @@ Rectangle {
             anchors.verticalCenter: parent.verticalCenter
             width: 14
             height: 14
-            source: "qrc:/icons/search.svg"
+            source: Theme.icon("qrc:/icons/search.svg", Theme.isDark)
             opacity: 0.5
         }
 
@@ -61,7 +61,7 @@ Rectangle {
             anchors.verticalCenter: parent.verticalCenter
             width: 14
             height: 14
-            source: "qrc:/icons/close.svg"
+            source: Theme.icon("qrc:/icons/close.svg", Theme.isDark)
             opacity: 0.6
             visible: textInput.text.length > 0
 
