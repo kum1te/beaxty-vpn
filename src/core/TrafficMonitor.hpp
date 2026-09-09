@@ -29,6 +29,7 @@ public:
     QString totalTraffic() const;
     int currentPing() const;
     bool isTestingPing() const;
+    void setTestingPing(bool testing);
 
     void updateTraffic(int proxyDl, int proxyUp, int directDl, int directUp);
     void setCurrentPing(int pingMs);

@@ -29,15 +29,31 @@ Rectangle {
 
     color: root.primary ? Theme.accentWhite
                         : (mouseArea.containsMouse && root.interactive ? Theme.cardHover : Theme.cardBg)
-    border.color: root.primary ? Theme.accentWhite
-                               : (mouseArea.containsMouse && root.interactive ? Theme.textSecondary : Theme.cardBorder)
+    property real pulseVal: 0.0
+    SequentialAnimation on pulseVal {
+        running: root.busy
+        loops: Animation.Infinite
+        NumberAnimation { from: 0.0; to: 1.0; duration: 750; easing.type: Easing.InOutSine }
+        NumberAnimation { from: 1.0; to: 0.0; duration: 750; easing.type: Easing.InOutSine }
+    }
+
+    readonly property color idleBorderColor: root.primary ? Theme.accentWhite
+                                : (mouseArea.containsMouse && root.interactive ? Theme.textSecondary : Theme.cardBorder)
+    readonly property color activePulseColor: root.primary ? Theme.accentDim : Theme.textPrimary
+
+    border.color: root.busy ? Qt.rgba(
+        idleBorderColor.r + (activePulseColor.r - idleBorderColor.r) * pulseVal,
+        idleBorderColor.g + (activePulseColor.g - idleBorderColor.g) * pulseVal,
+        idleBorderColor.b + (activePulseColor.b - idleBorderColor.b) * pulseVal,
+        1.0
+    ) : idleBorderColor
     border.width: 1
 
     scale: !root.interactive ? 1.0
                              : (mouseArea.pressed ? 0.96 : (mouseArea.containsMouse ? 1.02 : 1.0))
     Behavior on scale { NumberAnimation { duration: Theme.durationFast } }
     Behavior on color { ColorAnimation { duration: 150 } }
-    Behavior on border.color { ColorAnimation { duration: 150 } }
+    Behavior on border.color { enabled: !root.busy; ColorAnimation { duration: 150 } }
 
     Accessible.role: Accessible.Button
     Accessible.name: root.text
@@ -56,51 +72,70 @@ Rectangle {
         anchors.centerIn: parent
         spacing: 8
 
-        // Busy spinner: a rotating arc in the same ink as the label.
+        // Busy spinner: 16x16 circular arc (270°) with round caps and guide ring
         Item {
+            id: spinnerContainer
             anchors.verticalCenter: parent.verticalCenter
-            width: root.busy ? 12 : 0
-            height: 12
+            width: root.busy ? 16 : 0
+            height: 16
             visible: root.busy
+            clip: true
             Behavior on width { NumberAnimation { duration: Theme.durationFast } }
 
-            Rectangle {
-                anchors.fill: parent
-                radius: width / 2
-                color: "transparent"
-                border.color: root.primary ? Theme.textInverted : Theme.textPrimary
-                border.width: 1.5
-                opacity: 0.28
-            }
+            Item {
+                anchors.centerIn: parent
+                width: 16
+                height: 16
 
-            Rectangle {
-                width: 3
-                height: 3
-                radius: 1.5
-                color: root.primary ? Theme.textInverted : Theme.textPrimary
-                x: parent.width / 2 - 1.5
-                y: -1
-
-                transform: Rotation {
-                    origin.x: 1.5
-                    origin.y: parent ? parent.height / 2 + 1 : 6
-                    angle: spin.angle
+                // Guide ring (opacity 0.2)
+                Rectangle {
+                    anchors.fill: parent
+                    radius: 8
+                    color: "transparent"
+                    border.color: root.primary ? Theme.textInverted : Theme.textPrimary
+                    border.width: 2
+                    opacity: 0.2
                 }
-            }
 
-            QtObject {
-                id: spin
-                property real angle: 0
-            }
+                Canvas {
+                    id: spinnerCanvas
+                    anchors.fill: parent
+                    renderTarget: Canvas.Image
 
-            NumberAnimation {
-                target: spin
-                property: "angle"
-                from: 0
-                to: 360
-                duration: 900
-                loops: Animation.Infinite
-                running: root.busy
+                    Connections {
+                        target: Theme
+                        function onThemeChanged() { spinnerCanvas.requestPaint(); }
+                    }
+                    Connections {
+                        target: root
+                        function onPrimaryChanged() { spinnerCanvas.requestPaint(); }
+                    }
+
+                    onPaint: {
+                        var ctx = getContext("2d");
+                        ctx.reset();
+                        ctx.clearRect(0, 0, width, height);
+                        var strokeCol = root.primary ? Theme.textInverted : Theme.textPrimary;
+                        ctx.strokeStyle = strokeCol.toString();
+                        ctx.lineWidth = 2;
+                        ctx.lineCap = "round";
+                        ctx.beginPath();
+                        var cx = width / 2;
+                        var cy = height / 2;
+                        var r = (width - 2) / 2;
+                        // 270 degree arc from top (-PI/2) to left (PI)
+                        ctx.arc(cx, cy, r, -Math.PI / 2, Math.PI, false);
+                        ctx.stroke();
+                    }
+
+                    NumberAnimation on rotation {
+                        running: root.busy
+                        loops: Animation.Infinite
+                        from: 0
+                        to: 360
+                        duration: 800
+                    }
+                }
             }
         }
 

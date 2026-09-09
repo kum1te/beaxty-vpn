@@ -197,58 +197,6 @@ Window {
                                 font.letterSpacing: 1.2
                             }
                         }
-
-                        // Header Toggle Button (visible when expanded)
-                        Rectangle {
-                            id: headerToggleBtn
-                            Layout.preferredWidth: 28
-                            Layout.preferredHeight: 28
-                            Layout.alignment: Qt.AlignVCenter
-                            radius: 6
-                            visible: opacity > 0.01
-                            opacity: window.sidebarCollapsed ? 0.0 : 1.0
-                            Behavior on opacity { NumberAnimation { duration: 180 } }
-                            color: headerToggleMa.containsMouse ? Theme.cardHover : "transparent"
-                            border.color: headerToggleMa.containsMouse ? Theme.cardBorder : "transparent"
-                            border.width: 1
-
-                            Image {
-                                anchors.centerIn: parent
-                                width: 16
-                                height: 16
-                                source: Theme.icon("qrc:/icons/sidebar_toggle.svg", Theme.isDark)
-                                opacity: headerToggleMa.containsMouse ? 1.0 : 0.6
-                                Behavior on opacity { NumberAnimation { duration: 150 } }
-                            }
-
-                            MouseArea {
-                                id: headerToggleMa
-                                anchors.fill: parent
-                                hoverEnabled: true
-                                cursorShape: Qt.PointingHandCursor
-                                onClicked: window.toggleSidebar()
-                            }
-
-                            ToolTip {
-                                id: headerToggleTip
-                                visible: headerToggleMa.containsMouse && !window.sidebarCollapsed
-                                text: qsTr("Свернуть панель")
-                                delay: 300
-                                timeout: 2500
-                                contentItem: Text {
-                                    text: headerToggleTip.text
-                                    color: Theme.textPrimary
-                                    font.pixelSize: 12
-                                    font.bold: true
-                                }
-                                background: Rectangle {
-                                    color: Theme.cardBg
-                                    border.color: Theme.cardBorder
-                                    border.width: 1
-                                    radius: 6
-                                }
-                            }
-                        }
                     }
 
                     Rectangle {
@@ -520,6 +468,7 @@ Window {
     // Floating in-app Toast Notification Overlay
     ToastNotification {
         id: toast
+        objectName: "toastNotification"
         z: 99999
         anchors.top: parent.top
         anchors.right: parent.right

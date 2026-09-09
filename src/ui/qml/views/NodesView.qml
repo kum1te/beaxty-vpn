@@ -58,6 +58,14 @@ Item {
                 if (cA !== cB) return cA.localeCompare(cB);
                 return (a.name || "").localeCompare(b.name || "");
             });
+        } else if (mode === 3) {
+            // Reverse Alphabetical / Country (Z-A)
+            copy.sort(function(a, b) {
+                var cA = a.country || "";
+                var cB = b.country || "";
+                if (cA !== cB) return cB.localeCompare(cA);
+                return (b.name || "").localeCompare(a.name || "");
+            });
         }
         return copy;
     }
@@ -113,19 +121,163 @@ Item {
 
                 ActionButton {
                     busy: (typeof trafficMonitor !== "undefined") && trafficMonitor.isTestingPing
-                    text: busy ? qsTr("Тест...") : qsTr("Пинг")
+                    text: busy ? qsTr("Тест пинга...") : qsTr("Пинг")
                     onClicked: {
                         if (typeof trafficMonitor !== "undefined") trafficMonitor.testAllPings()
                     }
                 }
 
-                ActionButton {
+                Rectangle {
                     id: sortBtn
-                    property int sortMode: (typeof configAdapter !== "undefined") ? configAdapter.serverSortMode : 0
-                    text: sortMode === 1 ? qsTr("Пинг ⚡") : (sortMode === 2 ? qsTr("А-Я 🔤") : qsTr("Сортировка"))
-                    onClicked: {
-                        if (typeof configAdapter !== "undefined") {
-                            configAdapter.serverSortMode = (configAdapter.serverSortMode + 1) % 3;
+                    objectName: "sortBtn"
+                    Layout.preferredWidth: 38
+                    Layout.preferredHeight: 38
+                    radius: 19
+                    readonly property int sortMode: (typeof configAdapter !== "undefined") ? configAdapter.serverSortMode : 0
+
+                    color: sortMa.containsMouse ? Theme.cardHover : Theme.cardBg
+                    border.color: sortPopup.visible ? Theme.accentWhite : (sortMa.containsMouse ? Theme.textSecondary : Theme.cardBorder)
+                    border.width: 1
+
+                    Behavior on color { ColorAnimation { duration: 150 } }
+                    Behavior on border.color { ColorAnimation { duration: 150 } }
+
+                    Image {
+                        anchors.centerIn: parent
+                        width: 16
+                        height: 16
+                        source: Theme.icon("qrc:/icons/filter.svg", Theme.isDark)
+                        opacity: sortMa.containsMouse || sortPopup.visible ? 1.0 : 0.75
+                        Behavior on opacity { NumberAnimation { duration: 150 } }
+                    }
+
+                    // Accent dot indicator for non-default sort
+                    Rectangle {
+                        width: 6
+                        height: 6
+                        radius: 3
+                        anchors.top: parent.top
+                        anchors.right: parent.right
+                        anchors.topMargin: 7
+                        anchors.rightMargin: 7
+                        color: Theme.accentWhite
+                        visible: sortBtn.sortMode !== 0
+                    }
+
+                    MouseArea {
+                        id: sortMa
+                        anchors.fill: parent
+                        hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: {
+                            if (sortPopup.visible) {
+                                sortPopup.close()
+                            } else {
+                                sortPopup.open()
+                            }
+                        }
+                    }
+
+                    ToolTip {
+                        id: sortTip
+                        visible: sortMa.containsMouse && !sortPopup.visible
+                        text: qsTr("Сортировка")
+                        delay: 300
+                        timeout: 2500
+                        contentItem: Text {
+                            text: sortTip.text
+                            color: Theme.textPrimary
+                            font.pixelSize: 12
+                            font.bold: true
+                        }
+                        background: Rectangle {
+                            color: Theme.cardBg
+                            border.color: Theme.cardBorder
+                            border.width: 1
+                            radius: 6
+                        }
+                    }
+
+                    Popup {
+                        id: sortPopup
+                        objectName: "sortPopup"
+                        y: sortBtn.height + 6
+                        x: sortBtn.width - width
+                        width: 250
+                        padding: 6
+                        modal: true
+                        focus: true
+                        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+                        background: Rectangle {
+                            color: Theme.cardBg
+                            border.color: Theme.cardBorder
+                            border.width: 1
+                            radius: 12
+                        }
+
+                        contentItem: ColumnLayout {
+                            spacing: 2
+
+                            Repeater {
+                                model: [
+                                    { mode: 0, text: qsTr("По умолчанию") },
+                                    { mode: 1, text: qsTr("По скорости (быстрые первыми)") },
+                                    { mode: 2, text: qsTr("По названию (А — Я)") },
+                                    { mode: 3, text: qsTr("По названию (Я — А)") }
+                                ]
+
+                                delegate: Rectangle {
+                                    id: itemRect
+                                    required property var modelData
+                                    required property int index
+
+                                    Layout.fillWidth: true
+                                    Layout.preferredHeight: 36
+                                    radius: 8
+                                    readonly property bool isSelected: sortBtn.sortMode === modelData.mode
+                                    color: itemMa.containsMouse ? Theme.cardHover : "transparent"
+                                    border.color: isSelected ? Theme.cardBorder : "transparent"
+                                    border.width: 1
+
+                                    Behavior on color { ColorAnimation { duration: 120 } }
+
+                                    RowLayout {
+                                        anchors.fill: parent
+                                        anchors.leftMargin: 10
+                                        anchors.rightMargin: 10
+                                        spacing: 8
+
+                                        Text {
+                                            Layout.fillWidth: true
+                                            text: itemRect.modelData.text
+                                            color: itemRect.isSelected ? Theme.textPrimary : Theme.textSecondary
+                                            font.pixelSize: 12
+                                            font.bold: itemRect.isSelected
+                                            elide: Text.ElideRight
+                                        }
+
+                                        Image {
+                                            Layout.preferredWidth: 14
+                                            Layout.preferredHeight: 14
+                                            source: Theme.icon("qrc:/icons/check.svg", Theme.isDark)
+                                            visible: itemRect.isSelected
+                                        }
+                                    }
+
+                                    MouseArea {
+                                        id: itemMa
+                                        anchors.fill: parent
+                                        hoverEnabled: true
+                                        cursorShape: Qt.PointingHandCursor
+                                        onClicked: {
+                                            if (typeof configAdapter !== "undefined") {
+                                                configAdapter.serverSortMode = itemRect.modelData.mode;
+                                            }
+                                            sortPopup.close();
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
                 }

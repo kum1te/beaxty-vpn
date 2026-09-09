@@ -59,5 +59,7 @@
         <file alias="refresh_dark.svg">icons/refresh_dark.svg</file>
         <file alias="edit.svg">icons/edit.svg</file>
         <file alias="edit_dark.svg">icons/edit_dark.svg</file>
+        <file alias="filter.svg">icons/filter.svg</file>
+        <file alias="filter_dark.svg">icons/filter_dark.svg</file>
     </qresource>
 </RCC>

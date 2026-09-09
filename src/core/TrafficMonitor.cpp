@@ -52,6 +52,13 @@ bool TrafficMonitor::isTestingPing() const {
     return m_isTestingPing;
 }
 
+void TrafficMonitor::setTestingPing(bool testing) {
+    if (m_isTestingPing != testing) {
+        m_isTestingPing = testing;
+        emit pingTestingChanged(testing);
+    }
+}
+
 void TrafficMonitor::updateTraffic(int proxyDl, int proxyUp, int directDl, int directUp) {
     m_downRate = static_cast<quint64>(qMax(0, proxyDl) + qMax(0, directDl));
     m_upRate = static_cast<quint64>(qMax(0, proxyUp) + qMax(0, directUp));

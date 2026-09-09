@@ -147,13 +147,11 @@ int main(int argc, char *argv[]) {
     steps->push_back({[&]() {
         grab("build/beaxty_dashboard_collapsed.png");
         appPrefsService.setBool(QStringLiteral("sidebar_collapsed"), false);
-        engine.toggleConnect();
     }, 450});
 
-    // 5. Dashboard Connected: 960x640
+    // 5. Nodes View: 960x640
     steps->push_back({[&]() {
         grab("build/beaxty_dashboard_connected.png");
-        engine.toggleConnect();
         setView(1); // Nodes View
     }, 450});
 
@@ -161,6 +159,14 @@ int main(int argc, char *argv[]) {
     steps->push_back({[&]() {
         grab("build/beaxty_nodes_960x640.png");
         grab("build/beaxty_nodes.png");
+        // Test Ping animation in Nodes View
+        trafficMonitor.setTestingPing(true);
+    }, 450});
+
+    // 6-ping. Nodes View with active ping testing animation
+    steps->push_back({[&]() {
+        grab("build/beaxty_nodes_ping_testing.png");
+        trafficMonitor.setTestingPing(false);
         // Update pings for servers to test reactive latency badges
         int pingVal = 28;
         for (const auto &serverVar : configAdapter.servers()) {
@@ -168,6 +174,30 @@ int main(int argc, char *argv[]) {
             emit trafficMonitor.serverPingUpdated(sid, pingVal);
             pingVal += 16;
         }
+    }, 450});
+
+    // 6-sort-popup. Nodes View with Open Sort Popup
+    steps->push_back({[&]() {
+        QObject *sortPopup = window->findChild<QObject *>("sortPopup");
+        if (sortPopup) {
+            QMetaObject::invokeMethod(sortPopup, "open");
+        }
+    }, 450});
+
+    // 6-sort-grab. Grab sort popup, then switch sort mode to 1
+    steps->push_back({[&]() {
+        grab("build/beaxty_nodes_sort_popup.png");
+        QObject *sortPopup = window->findChild<QObject *>("sortPopup");
+        if (sortPopup) {
+            QMetaObject::invokeMethod(sortPopup, "close");
+        }
+        configAdapter.setServerSortMode(1);
+    }, 450});
+
+    // 6-sort-active. Grab Nodes View with active sort mode (accent dot visible)
+    steps->push_back({[&]() {
+        grab("build/beaxty_nodes_sort_active.png");
+        configAdapter.setServerSortMode(0);
     }, 450});
 
     // 6b. Nodes View with live pings
