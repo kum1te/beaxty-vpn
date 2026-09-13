@@ -58,8 +58,12 @@ bganim.mp4
 .idea/
 .qtcreator/
 .claude/
+.codex/
+.gemini/
 *.user
 *.user.*
+*.swp
+*~
 CMakeUserPresets.json
 
 # Operating System temporary files

@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.20)
 
-project(BeaxtyVPN VERSION 1.0.0 LANGUAGES C CXX)
+project(BeaxtyVPN VERSION 1.0.3 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -50,8 +50,8 @@ elseif (APPLE)
     set(MACOSX_BUNDLE_BUNDLE_NAME "BeaxtyVPN")
     set(MACOSX_BUNDLE_GUI_IDENTIFIER "com.beaxty.vpn")
     set(MACOSX_BUNDLE_ICON_FILE "Throne.icns")
-    set(MACOSX_BUNDLE_SHORT_VERSION_STRING "1.0.0")
-    set(MACOSX_BUNDLE_BUNDLE_VERSION "1.0.0")
+    set(MACOSX_BUNDLE_SHORT_VERSION_STRING "1.0.3")
+    set(MACOSX_BUNDLE_BUNDLE_VERSION "1.0.3")
 else ()
     set(PLATFORM_SOURCES
         ${THRONE_DIR}/src/sys/linux/LinuxCap.cpp
@@ -64,7 +64,7 @@ else ()
 endif ()
 
 # Generate NkrVersion.h required by Throne headers
-set(NKR_VERSION "1.0.0.0")
+set(NKR_VERSION "1.0.3.0")
 configure_file("${THRONE_DIR}/cmake/NkrVersion.h.in" "${CMAKE_CURRENT_BINARY_DIR}/NkrVersion.h" @ONLY)
 
 # Protobuf support via Throne's simple-protobuf
@@ -318,8 +318,8 @@ if (APPLE)
         OUTPUT_NAME "BeaxtyVPN"
         MACOSX_BUNDLE_BUNDLE_NAME "BeaxtyVPN"
         MACOSX_BUNDLE_GUI_IDENTIFIER "com.beaxty.vpn"
-        MACOSX_BUNDLE_SHORT_VERSION_STRING "1.0.0"
-        MACOSX_BUNDLE_BUNDLE_VERSION "1.0.0"
+        MACOSX_BUNDLE_SHORT_VERSION_STRING "1.0.3"
+        MACOSX_BUNDLE_BUNDLE_VERSION "1.0.3"
     )
 endif ()
 

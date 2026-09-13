@@ -161,7 +161,7 @@ int main(int argc, char *argv[]) {
 #endif
     app.setApplicationName(QStringLiteral("beaxty VPN"));
     app.setOrganizationName(QStringLiteral("Beaxty"));
-    app.setApplicationVersion(QStringLiteral("1.0.2"));
+    app.setApplicationVersion(QStringLiteral("1.0.3"));
     app.setWindowIcon(QIcon(QStringLiteral(":/icons/app_icon.svg")));
 
     QCommandLineParser parser;
