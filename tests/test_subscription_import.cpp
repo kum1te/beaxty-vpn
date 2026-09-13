@@ -62,6 +62,36 @@ int main(int argc, char *argv[]) {
     std::cout << "\n[2] Importing Base64 subscription (" << base64Sub.length() << " chars)..." << std::endl;
     adapter.importSubscription(base64Sub, QStringLiteral("Base64-Sub-Group"));
 
+    // 2b. Verify immediate server names in ConfigAdapter::servers() without "Server #ID" stubs
+    std::cout << "\n[2b] Verifying immediate server names in ConfigAdapter::servers()..." << std::endl;
+    auto importedServers = adapter.servers();
+    if (importedServers.size() != 3) {
+        std::cerr << "FAILED: Expected 3 imported servers, got " << importedServers.size() << std::endl;
+        return 1;
+    }
+    for (const auto &sVar : importedServers) {
+        QVariantMap sMap = sVar.toMap();
+        QString sName = sMap["name"].toString();
+        int sId = sMap["id"].toInt();
+        std::cout << "  Server ID " << sId << ": " << sName.toStdString() << std::endl;
+        if (sName.startsWith(QStringLiteral("Server #"))) {
+            std::cerr << "FAILED: Server ID " << sId << " has placeholder name '" << sName.toStdString() << "'!" << std::endl;
+            return 1;
+        }
+    }
+    bool foundAlpha = false, foundBeta = false, foundTest = false;
+    for (const auto &sVar : importedServers) {
+        QString sName = sVar.toMap()["name"].toString();
+        if (sName == QStringLiteral("Node-Alpha")) foundAlpha = true;
+        if (sName == QStringLiteral("Node-Beta")) foundBeta = true;
+        if (sName == QStringLiteral("TestServer")) foundTest = true;
+    }
+    if (!foundAlpha || !foundBeta || !foundTest) {
+        std::cerr << "FAILED: Expected server names (Node-Alpha, Node-Beta, TestServer) not found in adapter.servers()!" << std::endl;
+        return 1;
+    }
+    std::cout << "  [PASS] All server names immediately populated with real names!" << std::endl;
+
     // 3. Directly inspect SQLite database via SQLiteCpp
     std::cout << "\n[3] Verifying SQLite database tables and foreign keys..." << std::endl;
     try {

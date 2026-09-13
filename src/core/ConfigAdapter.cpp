@@ -82,7 +82,16 @@ void ConfigAdapter::reloadServers() {
         QVariantMap item;
         item["id"] = profile->id;
         item["gid"] = profile->gid;
-        item["name"] = profile->name.isEmpty() ? QString("Server #%1").arg(profile->id) : profile->name;
+        QString pName = profile->name.trimmed();
+        if (pName.isEmpty() && profile->outbound && !profile->outbound->name.trimmed().isEmpty()) {
+            pName = profile->outbound->name.trimmed();
+            profile->name = pName;
+        }
+        if (pName.isEmpty() && profile->outbound && !profile->outbound->server.trimmed().isEmpty()) {
+            pName = QStringLiteral("%1 %2").arg(profile->type.toUpper(), profile->outbound->server.trimmed());
+            profile->name = pName;
+        }
+        item["name"] = pName.isEmpty() ? QString("Server #%1").arg(profile->id) : pName;
         item["type"] = profile->type.toUpper();
         item["address"] = profile->outbound->server;
         item["port"] = profile->outbound->server_port;
@@ -620,7 +629,12 @@ void ConfigAdapter::updateGroup(int groupId, bool silent) {
         QList<std::shared_ptr<Configs::Profile>> incoming;
         Subscription::ParseSink parseSink;
         parseSink.profile = [&](std::shared_ptr<Configs::Profile> profile) {
-            if (profile && profile->outbound) incoming.append(profile);
+            if (profile && profile->outbound) {
+                if (profile->name.trimmed().isEmpty() && !profile->outbound->name.trimmed().isEmpty()) {
+                    profile->name = profile->outbound->name.trimmed();
+                }
+                incoming.append(profile);
+            }
         };
         Subscription::ParseDocument(resp.data, parseSink);
         if (incoming.isEmpty()) {
@@ -946,7 +960,12 @@ void ConfigAdapter::finishImport(const QString &trimmed, const QString &groupNam
         QList<std::shared_ptr<Configs::Profile>> profiles;
         Subscription::ParseSink sink;
         sink.profile = [&](std::shared_ptr<Configs::Profile> profile) {
-            if (profile && profile->outbound) profiles.append(profile);
+            if (profile && profile->outbound) {
+                if (profile->name.trimmed().isEmpty() && !profile->outbound->name.trimmed().isEmpty()) {
+                    profile->name = profile->outbound->name.trimmed();
+                }
+                profiles.append(profile);
+            }
         };
         Subscription::ParseDocument(contentData, sink);
         if (profiles.isEmpty()) {

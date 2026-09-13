@@ -193,6 +193,9 @@ namespace Configs {
 
     bool ProfilesRepo::AddProfile(std::shared_ptr<Profile>& profile, int gid) {
         if (profile->id >= 0) return false;
+        if (profile->outbound && profile->name.trimmed().isEmpty() && !profile->outbound->name.trimmed().isEmpty()) {
+            profile->name = profile->outbound->name.trimmed();
+        }
         int newId = NewProfileID();
         profile->id = newId;
         if (profile->outbound) profile->outbound->profile_id = newId;
@@ -228,6 +231,9 @@ namespace Configs {
             int id = firstId + i;
             toAdd[i]->id = id;
             if (toAdd[i]->outbound) toAdd[i]->outbound->profile_id = id;
+            if (toAdd[i]->outbound && toAdd[i]->name.trimmed().isEmpty() && !toAdd[i]->outbound->name.trimmed().isEmpty()) {
+                toAdd[i]->name = toAdd[i]->outbound->name.trimmed();
+            }
             toAdd[i]->gid = gid;
 
         }

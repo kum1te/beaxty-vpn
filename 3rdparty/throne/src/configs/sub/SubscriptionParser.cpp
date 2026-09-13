@@ -254,6 +254,9 @@ namespace Subscription {
 
             void produce(ProfilePtr ent) {
                 if (ent == nullptr) return;
+                if (ent->outbound && ent->name.trimmed().isEmpty() && !ent->outbound->name.trimmed().isEmpty()) {
+                    ent->name = ent->outbound->name.trimmed();
+                }
                 ++produced;
                 if (sink.profile) sink.profile(std::move(ent));
             }
