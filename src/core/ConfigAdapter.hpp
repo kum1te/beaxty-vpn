@@ -11,8 +11,12 @@
 #include <QSet>
 #include <QTimer>
 
+namespace Configs_network { struct HTTPResponse; }
+
 class ConfigAdapter : public QObject {
     Q_OBJECT
+    Q_PROPERTY(bool importing READ importing NOTIFY importingChanged)
+    Q_PROPERTY(bool refreshing READ refreshing NOTIFY refreshingChanged)
     Q_PROPERTY(QVariantList servers READ servers NOTIFY serversChanged)
     Q_PROPERTY(QVariantList groups READ groups NOTIFY groupsChanged)
     Q_PROPERTY(int selectedServerId READ selectedServerId NOTIFY selectedServerIdChanged)
@@ -26,7 +30,10 @@ class ConfigAdapter : public QObject {
 
 public:
     explicit ConfigAdapter(QObject *parent = nullptr);
+    ~ConfigAdapter() override;
     static ConfigAdapter *instance();
+    bool importing() const { return m_importing; }
+    bool refreshing() const { return !m_updatingGroups.isEmpty(); }
 
     QVariantList servers() const;
     QVariantList groups() const;
@@ -63,6 +70,8 @@ public:
     static bool demoDataRequestedFromEnv();
 
 signals:
+    void importingChanged();
+    void refreshingChanged();
     void serversChanged();
     void groupsChanged();
     void selectedServerIdChanged(int id);
@@ -73,6 +82,10 @@ signals:
     void importFinished(bool success, int count, const QString &message);
 
 private:
+    void finishImport(const QString &trimmed, const QString &groupName,
+                      const Configs_network::HTTPResponse &response);
+    bool m_importing = false;
+    QSet<int> m_updatingGroups;
     void ensureDefaultDemoServers();
     // Groups that came from a subscription URL, i.e. not manually added nodes.
     static QSet<int> subscriptionGroupIds();
@@ -85,5 +98,7 @@ private:
     int m_autoUpdateSubsMode = 1;
     int m_serverSortMode = 0;
     bool m_initialAutoUpdateTriggered = false;
+    bool m_preferencesLoaded = false;
+    QTimer m_pingPublishTimer;
     QTimer *m_autoUpdateTimer = nullptr;
 };

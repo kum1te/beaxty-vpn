@@ -3,6 +3,10 @@
 
 #include "ConfigAdapter.hpp"
 #include "ToastManager.hpp"
+#include "ThroneEngine.hpp"
+#include <QJsonDocument>
+#include <algorithm>
+#include <QScopeGuard>
 #include "AppPrefs.hpp"
 #include "3rdparty/throne/include/global/Configs.hpp"
 #include "3rdparty/throne/include/global/HTTPRequestHelper.hpp"
@@ -18,7 +22,7 @@
 #include <QGuiApplication>
 #include <QUrl>
 #include <QDateTime>
-#include <QThreadPool>
+
 #include <QDebug>
 
 ConfigAdapter *ConfigAdapter::s_instance = nullptr;
@@ -27,9 +31,16 @@ ConfigAdapter::ConfigAdapter(QObject *parent) : QObject(parent) {
     s_instance = this;
     m_autoUpdateSubsMode = AppPrefs::getInt(QStringLiteral("auto_update_subs_mode"), 1);
     m_serverSortMode = AppPrefs::getInt(QStringLiteral("server_sort_mode"), 0);
+    m_pingPublishTimer.setSingleShot(true);
+    m_pingPublishTimer.setInterval(50);
+    connect(&m_pingPublishTimer, &QTimer::timeout, this, &ConfigAdapter::serversChanged);
     m_autoUpdateTimer = new QTimer(this);
     connect(m_autoUpdateTimer, &QTimer::timeout, this, &ConfigAdapter::checkScheduledSubscriptionUpdates);
     m_autoUpdateTimer->start(30 * 60 * 1000);
+}
+
+ConfigAdapter::~ConfigAdapter() {
+    if (s_instance == this) s_instance = nullptr;
 }
 
 ConfigAdapter *ConfigAdapter::instance() {
@@ -49,6 +60,13 @@ void ConfigAdapter::reloadServers() {
         return;
     }
 
+    if (!m_preferencesLoaded) {
+        m_preferencesLoaded = true;
+        m_autoUpdateSubsMode = std::clamp(AppPrefs::getInt(QStringLiteral("auto_update_subs_mode"), 1), 0, 2);
+        m_serverSortMode = std::clamp(AppPrefs::getInt(QStringLiteral("server_sort_mode"), 0), 0, 3);
+        emit autoUpdateSubsModeChanged(m_autoUpdateSubsMode);
+        emit serverSortModeChanged(m_serverSortMode);
+    }
     auto repo = Configs::dataManager->profilesRepo.get();
     auto ids = repo->GetAllProfileIds();
 
@@ -58,8 +76,7 @@ void ConfigAdapter::reloadServers() {
     }
 
     QVariantList list;
-    for (int id : ids) {
-        auto profile = repo->GetProfile(id);
+    for (const auto &profile : repo->GetProfileBatch(ids)) {
         if (!profile || !profile->outbound) continue;
 
         QVariantMap item;
@@ -80,6 +97,15 @@ void ConfigAdapter::reloadServers() {
 
     m_servers = list;
 
+    // Drop stale selection and ping entries when profiles disappear.
+    const int previousSelection = m_selectedServerId;
+    QSet<int> available;
+    for (const auto &row : m_servers) available.insert(row.toMap()["id"].toInt());
+    for (auto it = m_pings.begin(); it != m_pings.end();) {
+        if (!available.contains(it.key())) it = m_pings.erase(it);
+        else ++it;
+    }
+    if (!available.contains(m_selectedServerId)) m_selectedServerId = -1;
     // Restore the last used node, else fall back to the first one available.
     if (m_selectedServerId < 0 && !m_servers.isEmpty()) {
         int restored = -1;
@@ -103,10 +129,16 @@ void ConfigAdapter::reloadServers() {
             var = map;
         }
 
-        emit selectedServerIdChanged(m_selectedServerId);
-        emit selectedServerChanged();
     }
-
+    if (previousSelection != m_selectedServerId) {
+        if (Configs::dataManager->settingsRepo) {
+            Configs::dataManager->settingsRepo->remember_id = m_selectedServerId;
+            Configs::dataManager->settingsRepo->Save();
+        }
+        emit selectedServerIdChanged(m_selectedServerId);
+    }
+    emit selectedServerChanged();
+    emit selectedServerPingChanged(selectedServerPing());
     emit serversChanged();
     emit groupsChanged();
 
@@ -114,6 +146,7 @@ void ConfigAdapter::reloadServers() {
         m_initialAutoUpdateTriggered = true;
         if (m_autoUpdateSubsMode >= 1) {
             QTimer::singleShot(1500, this, [this]() {
+                if (m_autoUpdateSubsMode == 0) return;
                 qInfo() << "[ConfigAdapter] Running startup silent subscription refresh";
                 refreshSubscriptions(/*silent=*/true);
             });
@@ -227,6 +260,7 @@ void ConfigAdapter::ensureDefaultDemoServers() {
             vless->flow = QStringLiteral("xtls-rprx-vision");
             p->outbound = std::move(vless);
         }
+        p->outbound->name = p->name;
         pRepo->AddProfile(p, group->id);
         if (pingMs > 0) {
             m_pings[p->id] = pingMs;
@@ -265,6 +299,7 @@ void ConfigAdapter::ensureDefaultDemoServers() {
     vlessCustom->uuid = QStringLiteral("c3d4e5f6-a7b8-9c0d-1e2f-3a4b5c6d7e8f");
     vlessCustom->flow = QStringLiteral("xtls-rprx-vision");
     pCustom->outbound = std::move(vlessCustom);
+    pCustom->outbound->name = pCustom->name;
     pRepo->AddProfile(pCustom, customGid);
     m_pings[pCustom->id] = 24;
 }
@@ -299,7 +334,11 @@ QString ConfigAdapter::selectedServerType() const {
 
 int ConfigAdapter::selectedServerPing() const {
     // 0 = not measured yet. Never invent a latency.
-    return m_pings.value(m_selectedServerId, 0);
+    for (const auto &row : m_servers) {
+        const auto map = row.toMap();
+        if (map["id"].toInt() == m_selectedServerId) return map["ping"].toInt();
+    }
+    return 0;
 }
 
 QString ConfigAdapter::selectedServerCountry() const {
@@ -317,6 +356,8 @@ int ConfigAdapter::serverCount() const {
 }
 
 void ConfigAdapter::selectServer(int profileId) {
+    if (!Configs::dataManager || !Configs::dataManager->profilesRepo ||
+        !Configs::dataManager->profilesRepo->GetProfile(profileId)) return;
     if (m_selectedServerId != profileId) {
         m_selectedServerId = profileId;
         if (Configs::dataManager && Configs::dataManager->settingsRepo) {
@@ -335,10 +376,12 @@ void ConfigAdapter::selectServer(int profileId) {
 void ConfigAdapter::deleteServer(int profileId) {
     if (Configs::dataManager && Configs::dataManager->profilesRepo) {
         QList<int> ids = {profileId};
-        Configs::dataManager->profilesRepo->BatchDeleteProfiles(ids);
-        if (m_selectedServerId == profileId) {
-            m_selectedServerId = -1;
+        auto settings = Configs::dataManager->settingsRepo.get();
+        if (settings && settings->started_id == profileId) {
+            if (ThroneEngine::instance()) ThroneEngine::instance()->stopConnection();
+            settings->started_id = -1;
         }
+        Configs::dataManager->profilesRepo->BatchDeleteProfiles(ids);
         reloadServers();
     }
 }
@@ -551,26 +594,40 @@ void ConfigAdapter::updateGroup(int groupId, bool silent) {
         ToastManager::instance()->showInfo(QStringLiteral("Обновление подписки \"%1\"...").arg(groupName));
     }
 
-    QThreadPool::globalInstance()->start([this, groupId, url, groupName, silent]() {
-        bool sendHwid = Configs::dataManager->settingsRepo ? Configs::dataManager->settingsRepo->sub_send_hwid : true;
-        auto resp = Configs_network::NetworkRequestHelper::HttpGet(url, sendHwid, false);
-
+    if (m_updatingGroups.contains(groupId)) return;
+    m_updatingGroups.insert(groupId);
+    emit refreshingChanged();
+    const bool sendHwid = Configs::dataManager->settingsRepo && Configs::dataManager->settingsRepo->sub_send_hwid;
+    Configs_network::NetworkRequestHelper::HttpGetAsync(this, url, sendHwid, false, 16 * 1024 * 1024,
+        [this, groupId, url, groupName, silent](Configs_network::HTTPResponse resp) {
+        const auto finished = qScopeGuard([this, groupId] {
+            m_updatingGroups.remove(groupId);
+            emit refreshingChanged();
+        });
         if (!resp.error.isEmpty() || resp.data.isEmpty()) {
-            qWarning() << "[ConfigAdapter] Failed to update group" << groupId << ":" << resp.error;
-            if (!silent) {
-                QMetaObject::invokeMethod(this, [groupName, err = resp.error]() {
-                    if (ToastManager::instance()) {
-                        ToastManager::instance()->showError(QStringLiteral("Ошибка обновления \"%1\": %2").arg(groupName, err));
-                    }
-                });
-            }
+            if (!silent && ToastManager::instance())
+                ToastManager::instance()->showError(tr("Не удалось обновить подписку. Сохранённые серверы не изменены."));
             return;
         }
-
+        try {
         auto gRepo = Configs::dataManager->groupsRepo.get();
         auto pRepo = Configs::dataManager->profilesRepo.get();
         auto grp = gRepo->GetGroup(groupId);
-        if (!grp) return;
+        if (!grp || grp->url.trimmed() != url) return;
+
+        // Parse before touching saved data: HTML errors and invalid subscriptions must
+        // never erase working servers or advance the successful-update timestamp.
+        QList<std::shared_ptr<Configs::Profile>> incoming;
+        Subscription::ParseSink parseSink;
+        parseSink.profile = [&](std::shared_ptr<Configs::Profile> profile) {
+            if (profile && profile->outbound) incoming.append(profile);
+        };
+        Subscription::ParseDocument(resp.data, parseSink);
+        if (incoming.isEmpty()) {
+            if (!silent && ToastManager::instance())
+                ToastManager::instance()->showError(tr("В подписке нет узлов. Сохранённые серверы не изменены."));
+            return;
+        }
 
         // 1. Profile Title
         QString profileTitle = Configs_network::NetworkRequestHelper::GetHeader(resp.header, QStringLiteral("profile-title"));
@@ -578,10 +635,6 @@ void ConfigAdapter::updateGroup(int groupId, bool silent) {
             QByteArray decoded = QByteArray::fromBase64(profileTitle.mid(7).trimmed().toUtf8());
             if (!decoded.isEmpty()) profileTitle = QString::fromUtf8(decoded);
         }
-        if (!profileTitle.trimmed().isEmpty()) {
-            grp->name = profileTitle.trimmed();
-        }
-        QString updatedGroupName = grp->name;
 
         // 2. Announce
         QString announceHeader = Configs_network::NetworkRequestHelper::GetHeader(resp.header, QStringLiteral("announce"));
@@ -610,9 +663,7 @@ void ConfigAdapter::updateGroup(int groupId, bool silent) {
         QString subInfo = Configs_network::NetworkRequestHelper::GetHeader(resp.header, QStringLiteral("subscription-userinfo"));
         QString baseInfo = !subInfo.isEmpty() ? subInfo : grp->info;
 
-        grp->info = packGroupInfo(baseInfo, decodedAnnounce, supportUrl, webUrl, intervalHours);
-        grp->sub_last_update = QDateTime::currentSecsSinceEpoch();
-        gRepo->Save(grp);
+        const QString updatedInfo = packGroupInfo(baseInfo, decodedAnnounce, supportUrl, webUrl, intervalHours);
 
         // Capture previously selected server properties to re-link after refresh
         int prevSelectedId = m_selectedServerId;
@@ -632,57 +683,69 @@ void ConfigAdapter::updateGroup(int groupId, bool silent) {
             }
         }
 
-        // Delete old profiles for this group
-        auto allProfiles = pRepo->GetProfileBatch(pRepo->GetAllProfileIds());
+        // Reuse unchanged profiles (including IDs, latency and traffic history).
+        // Persist new arrivals before deleting stale entries.
+        auto oldProfiles = pRepo->GetProfileBatch(pRepo->GetAllProfileIds());
         QList<int> oldIds;
-        for (const auto &p : allProfiles) {
-            if (p && p->gid == groupId) {
-                oldIds.append(p->id);
-            }
-        }
-        if (!oldIds.isEmpty()) {
-            int prevStartedId = Configs::dataManager->settingsRepo ? Configs::dataManager->settingsRepo->started_id : -1;
-            if (Configs::dataManager->settingsRepo) {
-                Configs::dataManager->settingsRepo->started_id = -1;
-            }
-            pRepo->BatchDeleteProfiles(oldIds);
-            if (Configs::dataManager->settingsRepo) {
-                Configs::dataManager->settingsRepo->started_id = prevStartedId;
-            }
-        }
-
-        int count = 0;
         QList<std::shared_ptr<Configs::Profile>> newProfiles;
-        Subscription::ParseSink sink;
-        sink.profile = [&](std::shared_ptr<Configs::Profile> prof) {
-            if (prof && prof->outbound) {
-                prof->gid = groupId;
-                if (prof->name.trimmed().isEmpty()) {
-                    prof->name = QStringLiteral("%1 %2").arg(prof->type.toUpper()).arg(count + 1);
-                }
-                if (prof->test_country.isEmpty()) prof->test_country = QStringLiteral("NL");
-                if (pRepo->AddProfile(prof, groupId)) {
-                    count++;
-                    newProfiles.append(prof);
-                }
-            }
+        QList<std::shared_ptr<Configs::Profile>> additions;
+        for (const auto &old : oldProfiles) {
+            if (old && old->gid == groupId) oldIds.append(old->id);
+        }
+        auto profileKey = [](const std::shared_ptr<Configs::Profile> &profile) {
+            return profile->type.toUtf8() + '\0'
+                + QJsonDocument(profile->outbound->ExportToJson()).toJson(QJsonDocument::Compact);
         };
-        sink.log = [](const QString &msg) { qDebug() << "[GroupUpdate]" << msg; };
-        sink.warn = [](const QString &w1, const QString &w2) { qWarning() << "[GroupUpdate]" << w1 << w2; };
-
-        Subscription::ParseDocument(resp.data, sink);
+        QHash<QByteArray, QList<std::shared_ptr<Configs::Profile>>> byContent;
+        for (const auto &old : oldProfiles)
+            if (old && old->gid == groupId && old->outbound) byContent[profileKey(old)].append(old);
+        QSet<int> claimed;
+        for (auto &profile : incoming) {
+            std::shared_ptr<Configs::Profile> match;
+            auto &matches = byContent[profileKey(profile)];
+            if (!matches.isEmpty()) match = matches.takeFirst();
+            if (match) {
+                claimed.insert(match->id);
+                newProfiles.append(match);
+            } else {
+                profile->gid = groupId;
+                additions.append(profile);
+                newProfiles.append(profile);
+            }
+        }
+        if (!additions.isEmpty() && !pRepo->AddProfileBatch(additions, groupId))
+            throw std::runtime_error("Cannot save subscription profiles");
+        QList<int> stale;
+        for (int id : oldIds) if (!claimed.contains(id)) stale.append(id);
+        auto settings = Configs::dataManager->settingsRepo.get();
+        const int startedId = settings ? settings->started_id : -1;
+        {
+            const auto restore = qScopeGuard([settings, startedId] {
+                if (settings) settings->started_id = startedId;
+            });
+            // A running profile remains available to the traffic/core lifecycle.
+            if (settings && (!ThroneEngine::instance() || ThroneEngine::instance()->state() == ThroneEngine::Disconnected))
+                settings->started_id = -1;
+            if (!stale.isEmpty() && !pRepo->BatchDeleteProfiles(stale))
+                throw std::runtime_error("Cannot remove stale subscription profiles");
+        }
+        const int count = incoming.size();
+        if (!profileTitle.trimmed().isEmpty()) grp->name = profileTitle.trimmed();
+        grp->info = updatedInfo;
+        grp->sub_last_update = QDateTime::currentSecsSinceEpoch();
+        gRepo->Save(grp);
 
         // Re-link the selected server to the newly added matching profile
         int newSelectedId = -1;
-        if (!prevAddress.isEmpty() && prevPort > 0) {
+        if (oldIds.contains(prevSelectedId) && !prevAddress.isEmpty() && prevPort > 0) {
             for (const auto &np : newProfiles) {
-                if (np && np->outbound && np->outbound->server == prevAddress && np->outbound->server_port == prevPort) {
+                if (np && np->outbound && np->type == prevType && np->outbound->server == prevAddress && np->outbound->server_port == prevPort) {
                     newSelectedId = np->id;
                     break;
                 }
             }
         }
-        if (newSelectedId == -1 && !prevName.isEmpty()) {
+        if (oldIds.contains(prevSelectedId) && newSelectedId == -1 && !prevName.isEmpty()) {
             for (const auto &np : newProfiles) {
                 if (np && np->name == prevName) {
                     newSelectedId = np->id;
@@ -691,35 +754,22 @@ void ConfigAdapter::updateGroup(int groupId, bool silent) {
             }
         }
 
-        if (newSelectedId != -1) {
-            if (Configs::dataManager->settingsRepo) {
-                Configs::dataManager->settingsRepo->started_id = newSelectedId;
-                Configs::dataManager->settingsRepo->Save();
-            }
-            m_selectedServerId = newSelectedId;
-        } else if (oldIds.contains(prevSelectedId)) {
-            if (!newProfiles.isEmpty()) {
-                int firstId = newProfiles.first()->id;
-                if (Configs::dataManager->settingsRepo) {
-                    Configs::dataManager->settingsRepo->started_id = firstId;
-                    Configs::dataManager->settingsRepo->Save();
-                }
-                m_selectedServerId = firstId;
-            } else {
-                if (Configs::dataManager->settingsRepo) {
-                    Configs::dataManager->settingsRepo->started_id = -1;
-                    Configs::dataManager->settingsRepo->Save();
-                }
-                m_selectedServerId = -1;
-            }
+        // Prefer the exact reused ID when several nodes share the same endpoint.
+        if (claimed.contains(prevSelectedId)) newSelectedId = prevSelectedId;
+        const bool runningSelection = ThroneEngine::instance() &&
+            ThroneEngine::instance()->state() != ThroneEngine::Disconnected && prevSelectedId == startedId;
+        if (oldIds.contains(prevSelectedId) && !runningSelection) {
+            if (newSelectedId < 0 && !newProfiles.isEmpty()) newSelectedId = newProfiles.first()->id;
+            if (newSelectedId >= 0) selectServer(newSelectedId);
         }
-
-        QMetaObject::invokeMethod(this, [this, updatedGroupName, count, silent]() {
+        reloadServers();
+        if (!silent && ToastManager::instance())
+            ToastManager::instance()->showSuccess(tr("Подписка обновлена: %1 узлов").arg(count));
+        } catch (const std::exception &) {
             reloadServers();
-            if (!silent && ToastManager::instance()) {
-                ToastManager::instance()->showSuccess(QStringLiteral("Подписка \"%1\" обновлена: %2 узлов").arg(updatedGroupName).arg(count));
-            }
-        });
+            if (!silent && ToastManager::instance())
+                ToastManager::instance()->showError(tr("Не удалось сохранить обновление подписки."));
+        }
     });
 }
 
@@ -750,13 +800,11 @@ void ConfigAdapter::deleteGroup(int groupId) {
         for (const auto &p : allProfiles) {
             if (p && p->gid == groupId) {
                 idsToDelete.append(p->id);
-                if (m_selectedServerId == p->id) {
-                    m_selectedServerId = -1;
-                }
             }
         }
         if (!idsToDelete.isEmpty()) {
             if (Configs::dataManager->settingsRepo && idsToDelete.contains(Configs::dataManager->settingsRepo->started_id)) {
+                if (ThroneEngine::instance()) ThroneEngine::instance()->stopConnection();
                 Configs::dataManager->settingsRepo->started_id = -1;
                 Configs::dataManager->settingsRepo->Save();
             }
@@ -771,180 +819,17 @@ void ConfigAdapter::deleteGroup(int groupId) {
 }
 
 void ConfigAdapter::refreshSubscriptions(bool silent) {
-    if (!Configs::dataManager || !Configs::dataManager->groupsRepo || !Configs::dataManager->profilesRepo) {
-        if (!silent && ToastManager::instance()) ToastManager::instance()->showError(tr("База данных не готова"));
-        return;
-    }
-
-    if (!silent && ToastManager::instance()) {
-        ToastManager::instance()->showInfo(tr("Обновление подписок..."));
-    }
-
-    QThreadPool::globalInstance()->start([this, silent]() {
-        auto gRepo = Configs::dataManager->groupsRepo.get();
-        auto pRepo = Configs::dataManager->profilesRepo.get();
-        auto gids = gRepo->GetAllGroupIds();
-        int totalUpdated = 0;
-        int groupsUpdated = 0;
-
-        bool sendHwid = Configs::dataManager->settingsRepo ? Configs::dataManager->settingsRepo->sub_send_hwid : true;
-
-        for (int gid : gids) {
-            auto group = gRepo->GetGroup(gid);
-            if (!group || group->url.trimmed().isEmpty()) continue;
-
-            auto resp = Configs_network::NetworkRequestHelper::HttpGet(group->url.trimmed(), sendHwid, false);
-            if (!resp.error.isEmpty() || resp.data.isEmpty()) {
-                qWarning() << "[ConfigAdapter] Failed to fetch subscription" << group->name << ":" << resp.error;
-                continue;
-            }
-
-            // 1. Profile Title
-            QString profileTitle = Configs_network::NetworkRequestHelper::GetHeader(resp.header, QStringLiteral("profile-title"));
-            if (profileTitle.startsWith(QStringLiteral("base64:"), Qt::CaseInsensitive)) {
-                QByteArray decoded = QByteArray::fromBase64(profileTitle.mid(7).trimmed().toUtf8());
-                if (!decoded.isEmpty()) profileTitle = QString::fromUtf8(decoded);
-            }
-            if (!profileTitle.trimmed().isEmpty()) {
-                group->name = profileTitle.trimmed();
-            }
-
-            // 2. Announce
-            QString announceHeader = Configs_network::NetworkRequestHelper::GetHeader(resp.header, QStringLiteral("announce"));
-            QString decodedAnnounce;
-            if (announceHeader.startsWith(QStringLiteral("base64:"), Qt::CaseInsensitive)) {
-                decodedAnnounce = QString::fromUtf8(QByteArray::fromBase64(announceHeader.mid(7).trimmed().toUtf8()));
-            } else if (!announceHeader.isEmpty()) {
-                decodedAnnounce = announceHeader;
-            }
-
-            // 3. Support and Web URLs
-            QString supportUrl = Configs_network::NetworkRequestHelper::GetHeader(resp.header, QStringLiteral("support-url"));
-            QString webUrl = Configs_network::NetworkRequestHelper::GetHeader(resp.header, QStringLiteral("profile-web-page-url"));
-
-            // Interval
-            QString intervalHeader = Configs_network::NetworkRequestHelper::GetHeader(resp.header, QStringLiteral("profile-update-interval"));
-            if (intervalHeader.isEmpty()) intervalHeader = Configs_network::NetworkRequestHelper::GetHeader(resp.header, QStringLiteral("Profile-Update-Interval"));
-            int intervalHours = -1;
-            if (!intervalHeader.isEmpty()) {
-                bool ok = false;
-                int parsed = intervalHeader.trimmed().toInt(&ok);
-                if (ok && parsed > 0) intervalHours = parsed;
-            }
-
-            // 4. Traffic info
-            QString subInfo = Configs_network::NetworkRequestHelper::GetHeader(resp.header, QStringLiteral("subscription-userinfo"));
-            QString baseInfo = !subInfo.isEmpty() ? subInfo : group->info;
-
-            group->info = packGroupInfo(baseInfo, decodedAnnounce, supportUrl, webUrl, intervalHours);
-            group->sub_last_update = QDateTime::currentSecsSinceEpoch();
-            gRepo->Save(group);
-
-            int prevSelectedId = m_selectedServerId;
-            QString prevAddress;
-            int prevPort = 0;
-            QString prevName;
-
-            if (prevSelectedId > 0) {
-                if (auto curProf = pRepo->GetProfile(prevSelectedId)) {
-                    prevName = curProf->name;
-                    if (curProf->outbound) {
-                        prevAddress = curProf->outbound->server;
-                        prevPort = curProf->outbound->server_port;
-                    }
-                }
-            }
-
-            // Delete old profiles for this group
-            auto allProfiles = pRepo->GetProfileBatch(pRepo->GetAllProfileIds());
-            QList<int> oldIds;
-            for (const auto &p : allProfiles) {
-                if (p && p->gid == gid) {
-                    oldIds.append(p->id);
-                }
-            }
-            if (!oldIds.isEmpty()) {
-                int prevStartedId = Configs::dataManager->settingsRepo ? Configs::dataManager->settingsRepo->started_id : -1;
-                if (Configs::dataManager->settingsRepo) {
-                    Configs::dataManager->settingsRepo->started_id = -1;
-                }
-                pRepo->BatchDeleteProfiles(oldIds);
-                if (Configs::dataManager->settingsRepo) {
-                    Configs::dataManager->settingsRepo->started_id = prevStartedId;
-                }
-            }
-
-            int count = 0;
-            QList<std::shared_ptr<Configs::Profile>> newProfiles;
-            Subscription::ParseSink sink;
-            sink.profile = [&](std::shared_ptr<Configs::Profile> prof) {
-                if (prof && prof->outbound) {
-                    prof->gid = gid;
-                    if (prof->name.trimmed().isEmpty()) {
-                        prof->name = QStringLiteral("%1 %2").arg(prof->type.toUpper()).arg(count + 1);
-                    }
-                    if (prof->test_country.isEmpty()) prof->test_country = QStringLiteral("NL");
-                    if (pRepo->AddProfile(prof, gid)) {
-                        count++;
-                        newProfiles.append(prof);
-                    }
-                }
-            };
-            sink.log = [](const QString &msg) { qDebug() << "[SubRefresh]" << msg; };
-            sink.warn = [](const QString &w1, const QString &w2) { qWarning() << "[SubRefresh]" << w1 << w2; };
-
-            Subscription::ParseDocument(resp.data, sink);
-            totalUpdated += count;
-            groupsUpdated++;
-
-            // Re-link if previous selected was in this group
-            if (oldIds.contains(prevSelectedId)) {
-                int newSelectedId = -1;
-                if (!prevAddress.isEmpty() && prevPort > 0) {
-                    for (const auto &np : newProfiles) {
-                        if (np && np->outbound && np->outbound->server == prevAddress && np->outbound->server_port == prevPort) {
-                            newSelectedId = np->id;
-                            break;
-                        }
-                    }
-                }
-                if (newSelectedId == -1 && !prevName.isEmpty()) {
-                    for (const auto &np : newProfiles) {
-                        if (np && np->name == prevName) {
-                            newSelectedId = np->id;
-                            break;
-                        }
-                    }
-                }
-                if (newSelectedId != -1) {
-                    if (Configs::dataManager->settingsRepo) {
-                        Configs::dataManager->settingsRepo->started_id = newSelectedId;
-                        Configs::dataManager->settingsRepo->Save();
-                    }
-                    m_selectedServerId = newSelectedId;
-                } else if (!newProfiles.isEmpty()) {
-                    int firstId = newProfiles.first()->id;
-                    if (Configs::dataManager->settingsRepo) {
-                        Configs::dataManager->settingsRepo->started_id = firstId;
-                        Configs::dataManager->settingsRepo->Save();
-                    }
-                    m_selectedServerId = firstId;
-                }
-            }
+    if (!Configs::dataManager || !Configs::dataManager->groupsRepo) return;
+    bool found = false;
+    for (int gid : Configs::dataManager->groupsRepo->GetAllGroupIds()) {
+        auto group = Configs::dataManager->groupsRepo->GetGroup(gid);
+        if (group && !group->url.trimmed().isEmpty()) {
+            found = true;
+            updateGroup(gid, silent);
         }
-
-        QMetaObject::invokeMethod(this, [this, totalUpdated, groupsUpdated, silent]() {
-            reloadServers();
-            if (!silent) {
-                if (groupsUpdated > 0) {
-                    QString msg = tr("Обновлено %1 серверов в %2 подписках").arg(totalUpdated).arg(groupsUpdated);
-                    if (ToastManager::instance()) ToastManager::instance()->showSuccess(msg);
-                } else {
-                    if (ToastManager::instance()) ToastManager::instance()->showInfo(tr("Нет подписок по URL для обновления"));
-                }
-            }
-        });
-    });
+    }
+    if (!found && !silent && ToastManager::instance())
+        ToastManager::instance()->showInfo(tr("Нет подписок по URL для обновления"));
 }
 
 void ConfigAdapter::importSubscription(const QString &urlOrContent, const QString &groupName) {
@@ -961,6 +846,27 @@ void ConfigAdapter::importSubscription(const QString &urlOrContent, const QStrin
         return;
     }
 
+    if (m_importing) return;
+    m_importing = true;
+    emit importingChanged();
+    const QUrl url(trimmed);
+    if (url.scheme().compare("http", Qt::CaseInsensitive) == 0 || url.scheme().compare("https", Qt::CaseInsensitive) == 0) {
+        const bool sendHwid = Configs::dataManager->settingsRepo && Configs::dataManager->settingsRepo->sub_send_hwid;
+        Configs_network::NetworkRequestHelper::HttpGetAsync(this, trimmed, sendHwid, false, 16 * 1024 * 1024,
+            [this, trimmed, groupName](Configs_network::HTTPResponse response) {
+                finishImport(trimmed, groupName, response);
+            });
+    } else {
+        finishImport(trimmed, groupName, {});
+    }
+}
+
+void ConfigAdapter::finishImport(const QString &trimmed, const QString &groupName,
+                                const Configs_network::HTTPResponse &response) {
+    const auto finished = qScopeGuard([this] {
+        m_importing = false;
+        emit importingChanged();
+    });
     try {
         QString finalGroupName = groupName.trimmed();
         QString subInfo;
@@ -970,9 +876,8 @@ void ConfigAdapter::importSubscription(const QString &urlOrContent, const QStrin
         int intervalHours = 24;
         QByteArray contentData = trimmed.toUtf8();
 
-        if (trimmed.startsWith(QStringLiteral("http://")) || trimmed.startsWith(QStringLiteral("https://"))) {
-            bool sendHwid = Configs::dataManager ? Configs::dataManager->settingsRepo->sub_send_hwid : true;
-            auto resp = Configs_network::NetworkRequestHelper::HttpGet(trimmed, sendHwid, false);
+        if (trimmed.startsWith(QStringLiteral("http://"), Qt::CaseInsensitive) || trimmed.startsWith(QStringLiteral("https://"), Qt::CaseInsensitive)) {
+            const auto &resp = response;
             if (!resp.error.isEmpty()) {
                 QString err = tr("Ошибка сети при загрузке подписки: %1").arg(resp.error);
                 if (ToastManager::instance()) ToastManager::instance()->showError(err);
@@ -1038,54 +943,36 @@ void ConfigAdapter::importSubscription(const QString &urlOrContent, const QStrin
             finalGroupName = QStringLiteral("Подписка Beaxty");
         }
 
+        QList<std::shared_ptr<Configs::Profile>> profiles;
+        Subscription::ParseSink sink;
+        sink.profile = [&](std::shared_ptr<Configs::Profile> profile) {
+            if (profile && profile->outbound) profiles.append(profile);
+        };
+        Subscription::ParseDocument(contentData, sink);
+        if (profiles.isEmpty()) {
+            const QString err = tr("В содержимом не найдено прокси-узлов");
+            if (ToastManager::instance()) ToastManager::instance()->showError(err);
+            emit importFinished(false, 0, err);
+            return;
+        }
         // Guarantee an existing group in SQLite
         auto group = Configs::GroupsRepo::NewGroup();
         group->name = finalGroupName;
-        if (trimmed.startsWith(QStringLiteral("http://")) || trimmed.startsWith(QStringLiteral("https://"))) {
+        if (trimmed.startsWith(QStringLiteral("http://"), Qt::CaseInsensitive) || trimmed.startsWith(QStringLiteral("https://"), Qt::CaseInsensitive)) {
             group->url = trimmed;
         }
         group->info = packGroupInfo(subInfo, decodedAnnounce, supportUrl, webUrl, intervalHours);
         group->sub_last_update = QDateTime::currentSecsSinceEpoch();
         Configs::dataManager->groupsRepo->AddGroup(group);
         int targetGid = group->id;
+
+        if (!Configs::dataManager->profilesRepo->AddProfileBatch(profiles, targetGid)) {
+            Configs::dataManager->groupsRepo->DeleteGroup(targetGid);
+            throw std::runtime_error("Cannot save imported profiles");
+        }
+        const int count = profiles.size();
+        const int firstImportedId = profiles.first()->id;
         Configs::dataManager->settingsRepo->current_group = targetGid;
-
-        int count = 0;
-        int firstImportedId = -1;
-        Subscription::ParseSink sink;
-        sink.profile = [&](std::shared_ptr<Configs::Profile> prof) {
-            if (prof && prof->outbound) {
-                prof->gid = targetGid;
-                if (prof->name.trimmed().isEmpty()) {
-                    prof->name = QStringLiteral("%1 %2").arg(prof->type.toUpper()).arg(count + 1);
-                }
-                // Country is left blank until a real test result comes back; the UI
-                // hides the pill rather than showing a guess.
-                bool added = Configs::dataManager->profilesRepo->AddProfile(prof, targetGid);
-                if (added) {
-                    if (firstImportedId < 0) {
-                        firstImportedId = prof->id;
-                    }
-                    count++;
-                }
-            }
-        };
-        sink.log = [](const QString &msg) { qDebug() << "[SubImport]" << msg; };
-        sink.warn = [](const QString &w1, const QString &w2) { qWarning() << "[SubImport]" << w1 << w2; };
-
-        if (trimmed.startsWith(QStringLiteral("http://")) || trimmed.startsWith(QStringLiteral("https://"))) {
-            Subscription::ParseDocument(contentData, sink);
-        } else {
-            Subscription::ParseText(trimmed, sink);
-        }
-
-        if (count == 0) {
-            QString err = tr("В содержимом не найдено прокси-узлов");
-            if (ToastManager::instance()) ToastManager::instance()->showError(err);
-            emit importFinished(false, 0, err);
-            return;
-        }
-
         reloadServers();
 
         // Automatically switch to the newly imported server node
@@ -1118,11 +1005,10 @@ QString ConfigAdapter::getClipboardText() const {
 }
 
 void ConfigAdapter::updateServerPing(int profileId, int pingMs) {
+    bool exists = false;
+    for (const auto &row : m_servers) if (row.toMap()["id"].toInt() == profileId) { exists = true; break; }
+    if (!exists) return;
     m_pings[profileId] = pingMs;
-    if (profileId == m_selectedServerId) {
-        emit selectedServerPingChanged(pingMs);
-    }
-
     // A full reloadServers() here re-queries every profile and rebuilds every QML
     // delegate; "Ping All" would do that once per node. Patch the one row instead.
     bool patched = false;
@@ -1135,10 +1021,9 @@ void ConfigAdapter::updateServerPing(int profileId, int pingMs) {
             break;
         }
     }
-    if (patched) {
-        emit serversChanged();
-    } else {
-        reloadServers();
+    if (patched && profileId == m_selectedServerId) emit selectedServerPingChanged(pingMs);
+    if (patched && !m_pingPublishTimer.isActive()) {
+        m_pingPublishTimer.start();
     }
 }
 
@@ -1147,6 +1032,7 @@ int ConfigAdapter::autoUpdateSubsMode() const {
 }
 
 void ConfigAdapter::setAutoUpdateSubsMode(int mode) {
+    if (mode < 0 || mode > 2) return;
     if (m_autoUpdateSubsMode != mode) {
         m_autoUpdateSubsMode = mode;
         AppPrefs::setInt(QStringLiteral("auto_update_subs_mode"), mode);
@@ -1159,6 +1045,7 @@ int ConfigAdapter::serverSortMode() const {
 }
 
 void ConfigAdapter::setServerSortMode(int mode) {
+    if (mode < 0 || mode > 3) return;
     if (m_serverSortMode != mode) {
         m_serverSortMode = mode;
         AppPrefs::setInt(QStringLiteral("server_sort_mode"), mode);

@@ -7,6 +7,7 @@ import ".."
 Item {
     id: root
     anchors.fill: parent
+    property bool animationsEnabled: true
 
     // Dynamic state properties
     readonly property int vpnState: (typeof throneEngine !== "undefined") ? throneEngine.state : 0
@@ -14,6 +15,7 @@ Item {
 
     // Halftone Wave Matrix Background (Procedural shader matching bganim.mp4)
     HalftoneWaveBackground {
+        animationsEnabled: root.animationsEnabled
         anchors.fill: parent
     }
 
@@ -39,6 +41,7 @@ Item {
 
         SequentialAnimation on defaultX {
             running: root.vpnState !== 1
+            paused: running && !root.animationsEnabled
             loops: Animation.Infinite
             NumberAnimation { from: root.width * 0.45; to: root.width * 0.62; duration: 9000; easing.type: Easing.InOutSine }
             NumberAnimation { to: root.width * 0.45; duration: 9000; easing.type: Easing.InOutSine }
@@ -46,6 +49,7 @@ Item {
 
         SequentialAnimation on defaultY {
             running: root.vpnState !== 1
+            paused: running && !root.animationsEnabled
             loops: Animation.Infinite
             NumberAnimation { from: -100; to: -20; duration: 11000; easing.type: Easing.InOutSine }
             NumberAnimation { to: -100; duration: 11000; easing.type: Easing.InOutSine }
@@ -54,6 +58,7 @@ Item {
         // Pulse in connecting state
         SequentialAnimation on scale {
             running: root.vpnState === 1
+            paused: running && !root.animationsEnabled
             loops: Animation.Infinite
             NumberAnimation { from: 0.85; to: 1.04; duration: 1200; easing.type: Easing.InOutSine }
             NumberAnimation { to: 0.85; duration: 1200; easing.type: Easing.InOutSine }
@@ -103,6 +108,7 @@ Item {
 
         SequentialAnimation on defaultX {
             running: root.vpnState !== 1
+            paused: running && !root.animationsEnabled
             loops: Animation.Infinite
             NumberAnimation { from: root.width * 0.05; to: root.width * 0.18; duration: 13000; easing.type: Easing.InOutSine }
             NumberAnimation { to: root.width * 0.05; duration: 13000; easing.type: Easing.InOutSine }
@@ -110,6 +116,7 @@ Item {
 
         SequentialAnimation on defaultY {
             running: root.vpnState !== 1
+            paused: running && !root.animationsEnabled
             loops: Animation.Infinite
             NumberAnimation { from: root.height * 0.40; to: root.height * 0.58; duration: 10000; easing.type: Easing.InOutSine }
             NumberAnimation { to: root.height * 0.40; duration: 10000; easing.type: Easing.InOutSine }
@@ -118,6 +125,7 @@ Item {
         // Pulse in connecting state
         SequentialAnimation on scale {
             running: root.vpnState === 1
+            paused: running && !root.animationsEnabled
             loops: Animation.Infinite
             NumberAnimation { from: 0.84; to: 1.02; duration: 1300; easing.type: Easing.InOutSine }
             NumberAnimation { to: 0.84; duration: 1300; easing.type: Easing.InOutSine }
@@ -160,6 +168,7 @@ Item {
         // Pulse during connecting
         SequentialAnimation on scale {
             running: root.vpnState === 1
+            paused: running && !root.animationsEnabled
             loops: Animation.Infinite
             NumberAnimation { from: 0.90; to: 1.12; duration: 1100; easing.type: Easing.InOutSine }
             NumberAnimation { to: 0.90; duration: 1100; easing.type: Easing.InOutSine }
@@ -168,6 +177,7 @@ Item {
         // Gentle breathing when protected
         SequentialAnimation on scale {
             running: root.vpnState === 2
+            paused: running && !root.animationsEnabled
             loops: Animation.Infinite
             NumberAnimation { from: 1.0; to: 1.05; duration: 3200; easing.type: Easing.InOutSine }
             NumberAnimation { to: 1.0; duration: 3200; easing.type: Easing.InOutSine }

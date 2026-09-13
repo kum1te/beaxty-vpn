@@ -16,6 +16,11 @@ static void ensureDictionariesInitialized() {
     initialized = true;
 
     s_ruToEn = {
+        {QStringLiteral("Загрузка..."), QStringLiteral("Downloading...")},
+        {QStringLiteral("Не удалось обновить подписку. Сохранённые серверы не изменены."), QStringLiteral("Could not update subscription. Saved servers were kept.")},
+        {QStringLiteral("В подписке нет узлов. Сохранённые серверы не изменены."), QStringLiteral("No nodes found in subscription. Saved servers were kept.")},
+        {QStringLiteral("Не удалось сохранить обновление подписки."), QStringLiteral("Could not save subscription update.")},
+        {QStringLiteral("Подписка обновлена: %1 узлов"), QStringLiteral("Subscription updated: %1 nodes")},
         // Navigation
         {QStringLiteral("Дашборд"), QStringLiteral("Dashboard")},
         {QStringLiteral("Подключение"), QStringLiteral("Dashboard")},

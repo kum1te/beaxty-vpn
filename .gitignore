@@ -4,6 +4,7 @@
 
 # Build artifacts and build directories
 build/
+build-local/
 cmake-build-*/
 out/
 bin/

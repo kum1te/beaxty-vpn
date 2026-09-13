@@ -66,10 +66,17 @@ Window {
 
     // Atmospheric Living Background (Dark Glass / Ambient Mesh)
     AmbientBackground {
+        animationsEnabled: window.visible && window.visibility !== Window.Minimized
         z: 0
     }
 
     property bool sidebarCollapsed: (typeof appPrefs !== "undefined") ? appPrefs.sidebarCollapsed : false
+    // All sidebar geometry follows this single interruptible animation.
+    property real sidebarProgress: sidebarCollapsed ? 1 : 0
+    Behavior on sidebarProgress {
+        NumberAnimation { duration: 220; easing.type: Easing.OutCubic }
+    }
+
     function toggleSidebar() {
         sidebarCollapsed = !sidebarCollapsed;
         if (typeof appPrefs !== "undefined") {
@@ -78,6 +85,7 @@ Window {
     }
 
     RowLayout {
+        enabled: !importSheet.visible
         z: 1
         anchors.fill: parent
         spacing: 0
@@ -87,14 +95,12 @@ Window {
         // ==========================================
         Rectangle {
             id: sidebar
-            Layout.preferredWidth: window.sidebarCollapsed ? 68 : 220
+            objectName: "sidebar"
+            Layout.preferredWidth: 220 - 152 * window.sidebarProgress
             Layout.fillHeight: true
             color: Theme.isDark ? "#E608080A" : "#FAFAFA"
             clip: true
 
-            Behavior on Layout.preferredWidth {
-                NumberAnimation { duration: 220; easing.type: Easing.OutCubic }
-            }
 
             // Right border line
             Rectangle {
@@ -115,12 +121,11 @@ Window {
 
                     RowLayout {
                         anchors.fill: parent
-                        anchors.leftMargin: window.sidebarCollapsed ? Math.round((parent.width - 34) / 2) : 16
-                        anchors.rightMargin: window.sidebarCollapsed ? Math.round((parent.width - 34) / 2) : 12
-                        spacing: window.sidebarCollapsed ? 0 : 10
+                        anchors.leftMargin: 16 + window.sidebarProgress
+                        anchors.rightMargin: parent.width - anchors.leftMargin - 192
+                        spacing: 10
 
-                        Behavior on anchors.leftMargin { NumberAnimation { duration: 220; easing.type: Easing.OutCubic } }
-                        Behavior on anchors.rightMargin { NumberAnimation { duration: 220; easing.type: Easing.OutCubic } }
+
 
                         Rectangle {
                             id: logoBadge
@@ -176,9 +181,8 @@ Window {
                             Layout.fillWidth: true
                             spacing: 5
                             Layout.alignment: Qt.AlignVCenter
-                            visible: opacity > 0.01
-                            opacity: window.sidebarCollapsed ? 0.0 : 1.0
-                            Behavior on opacity { NumberAnimation { duration: 180 } }
+                            opacity: 1 - window.sidebarProgress
+
 
                             Text {
                                 text: "beaxty"
@@ -203,12 +207,12 @@ Window {
                         anchors.bottom: parent.bottom
                         anchors.left: parent.left
                         anchors.right: parent.right
-                        anchors.leftMargin: window.sidebarCollapsed ? 8 : 16
-                        anchors.rightMargin: window.sidebarCollapsed ? 8 : 16
+                        anchors.leftMargin: 16 - 8 * window.sidebarProgress
+                        anchors.rightMargin: 16 - 8 * window.sidebarProgress
                         height: 1
                         color: Theme.separator
-                        Behavior on anchors.leftMargin { NumberAnimation { duration: 200 } }
-                        Behavior on anchors.rightMargin { NumberAnimation { duration: 200 } }
+
+
                     }
                 }
 
@@ -217,12 +221,11 @@ Window {
                 // 2. Vertical Navigation Menu
                 ColumnLayout {
                     Layout.fillWidth: true
-                    Layout.leftMargin: window.sidebarCollapsed ? 8 : 12
-                    Layout.rightMargin: window.sidebarCollapsed ? 8 : 12
+                    Layout.leftMargin: 12 - 4 * window.sidebarProgress
+                    Layout.rightMargin: 12 - 4 * window.sidebarProgress
                     spacing: 6
 
-                    Behavior on Layout.leftMargin { NumberAnimation { duration: 200 } }
-                    Behavior on Layout.rightMargin { NumberAnimation { duration: 200 } }
+
 
                     Repeater {
                         model: [
@@ -241,6 +244,7 @@ Window {
                             iconSource: modelData.icon
                             active: viewStack.currentIndex === index
                             collapsed: window.sidebarCollapsed
+                            collapseProgress: window.sidebarProgress
                             onClicked: viewStack.currentIndex = index
                         }
                     }
@@ -252,8 +256,8 @@ Window {
                 Rectangle {
                     Layout.fillWidth: true
                     Layout.preferredHeight: 38
-                    Layout.leftMargin: window.sidebarCollapsed ? 8 : 12
-                    Layout.rightMargin: window.sidebarCollapsed ? 8 : 12
+                    Layout.leftMargin: 12 - 4 * window.sidebarProgress
+                    Layout.rightMargin: 12 - 4 * window.sidebarProgress
                     Layout.bottomMargin: 8
                     radius: 8
                     color: toggleRowMa.containsMouse ? Theme.cardHover : "transparent"
@@ -265,31 +269,29 @@ Window {
 
                     RowLayout {
                         anchors.fill: parent
-                        anchors.leftMargin: window.sidebarCollapsed ? 0 : 14
-                        anchors.rightMargin: window.sidebarCollapsed ? 0 : 14
-                        spacing: window.sidebarCollapsed ? 0 : 12
+                        anchors.leftMargin: 14 + 4 * window.sidebarProgress
+                        anchors.rightMargin: parent.width - anchors.leftMargin - 168
+                        spacing: 12
 
                         Image {
                             Layout.preferredWidth: 16
                             Layout.preferredHeight: 16
-                            Layout.alignment: window.sidebarCollapsed ? Qt.AlignHCenter : Qt.AlignVCenter
+                            Layout.alignment: Qt.AlignVCenter
                             source: Theme.icon("qrc:/icons/sidebar_toggle.svg", Theme.isDark)
-                            rotation: window.sidebarCollapsed ? 180 : 0
+                            rotation: 180 * window.sidebarProgress
                             opacity: toggleRowMa.containsMouse ? 1.0 : 0.6
-                            Behavior on rotation { NumberAnimation { duration: 220; easing.type: Easing.OutCubic } }
                             Behavior on opacity { NumberAnimation { duration: 150 } }
                         }
 
                         Text {
-                            Layout.fillWidth: !window.sidebarCollapsed
-                            visible: opacity > 0.01
-                            opacity: window.sidebarCollapsed ? 0.0 : 1.0
+                            Layout.fillWidth: true
+                            opacity: 1 - window.sidebarProgress
                             text: qsTr("Свернуть")
                             color: Theme.textSecondary
                             font.pixelSize: 13
                             font.bold: false
                             elide: Text.ElideRight
-                            Behavior on opacity { NumberAnimation { duration: 180 } }
+
                         }
                     }
 
@@ -336,16 +338,15 @@ Window {
 
                     RowLayout {
                         anchors.fill: parent
-                        anchors.leftMargin: window.sidebarCollapsed ? 0 : 16
-                        anchors.rightMargin: window.sidebarCollapsed ? 0 : 16
-                        spacing: window.sidebarCollapsed ? 0 : 10
+                        anchors.leftMargin: 16 + 13 * window.sidebarProgress
+                        anchors.rightMargin: parent.width - anchors.leftMargin - 188
+                        spacing: 10
 
-                        Behavior on anchors.leftMargin { NumberAnimation { duration: 200 } }
-                        Behavior on anchors.rightMargin { NumberAnimation { duration: 200 } }
+
 
                         // Status dot
                         Rectangle {
-                            Layout.alignment: window.sidebarCollapsed ? Qt.AlignHCenter : Qt.AlignVCenter
+                            Layout.alignment: Qt.AlignVCenter
                             width: 10
                             height: 10
                             radius: 5
@@ -363,11 +364,10 @@ Window {
                         }
 
                         ColumnLayout {
-                            Layout.fillWidth: !window.sidebarCollapsed
-                            visible: opacity > 0.01
-                            opacity: window.sidebarCollapsed ? 0.0 : 1.0
+                            Layout.fillWidth: true
+                            opacity: 1 - window.sidebarProgress
                             spacing: 1
-                            Behavior on opacity { NumberAnimation { duration: 180 } }
+
 
                             Text {
                                 text: (typeof throneEngine !== "undefined") ? throneEngine.stateString : "DISCONNECTED"
@@ -387,15 +387,14 @@ Window {
 
                         // TUN Badge
                         Rectangle {
-                            visible: opacity > 0.01
-                            opacity: window.sidebarCollapsed ? 0.0 : 1.0
+                            opacity: 1 - window.sidebarProgress
                             height: 20
                             width: 44
                             radius: 10
                             color: Theme.cardBg
                             border.color: Theme.cardBorder
                             border.width: 1
-                            Behavior on opacity { NumberAnimation { duration: 180 } }
+
 
                             Text {
                                 anchors.centerIn: parent
@@ -450,18 +449,28 @@ Window {
             Layout.fillHeight: true
             currentIndex: 0
 
-            DashboardView {
-                onRequestNodesView: viewStack.currentIndex = 1
-                onRequestRoutingView: viewStack.currentIndex = 2
+            SectionPage {
+                DashboardView {
+                    anchors.fill: parent
+                    onRequestNodesView: viewStack.currentIndex = 1
+                    onRequestRoutingView: viewStack.currentIndex = 2
+                }
             }
 
-            NodesView {
-                onRequestImport: window.openImportSheet()
+            SectionPage {
+                NodesView {
+                    anchors.fill: parent
+                    onRequestImport: window.openImportSheet()
+                }
             }
 
-            RoutingView {}
+            SectionPage {
+                RoutingView { anchors.fill: parent }
+            }
 
-            SettingsView {}
+            SectionPage {
+                SettingsView { anchors.fill: parent }
+            }
         }
     }
 

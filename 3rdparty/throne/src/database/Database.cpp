@@ -216,7 +216,7 @@ namespace Configs {
             stmt.exec();
             maybeCheckpoint(static_cast<int>(rows.size()));
         } catch (std::exception& e) {
-            NotifyError("execBatchInsertProfiles", e);
+            throw;
         }
     }
 

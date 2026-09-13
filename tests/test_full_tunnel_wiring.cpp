@@ -22,6 +22,7 @@
 #include "3rdparty/throne/include/api/RPC.h"
 #include "src/bridge/MainWindowBridge.hpp"
 #include "src/core/ThroneEngine.hpp"
+#include "src/core/RoutingManager.hpp"
 #include "src/core/ConfigAdapter.hpp"
 #include "src/core/RoutingManager.hpp"
 #include "src/core/ToastManager.hpp"
@@ -43,6 +44,8 @@ int main(int argc, char *argv[]) {
     std::cout << "\n[1] Verifying network defaults in SettingsRepo..." << std::endl;
     ThroneEngine engine;
     engine.initialize(testDbPath);
+    RoutingManager routingManager;
+    routingManager.initializeRouteProfiles();
 
     auto* settings = Configs::dataManager->settingsRepo.get();
     assert(settings != nullptr);
@@ -86,6 +89,7 @@ int main(int argc, char *argv[]) {
     assert(added);
 
     auto result = Configs::BuildSingBoxConfig(profile);
+    if (!result->error.isEmpty()) std::cerr << result->error.toStdString() << std::endl;
     assert(result->error.isEmpty());
 
     // Build the request exactly as ThroneEngine::startConnection() does

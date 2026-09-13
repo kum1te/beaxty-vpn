@@ -261,6 +261,10 @@ namespace Configs {
             }
         }
 
+        void execBatchInsertProfilesThrow(const std::vector<ProfileInsertRow>& rows) {
+            execBatchInsertProfiles0(rows);
+        }
+
         void execBatchInsertProfiles(const std::vector<ProfileInsertRow>& rows) {
             try {
                 execBatchInsertProfiles0(rows);

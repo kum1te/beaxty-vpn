@@ -64,11 +64,61 @@ static QIcon createMonochromeTrayIcon(bool connected) {
     return QIcon(pixmap);
 }
 
+#if defined(_WIN32)
+#include <windows.h>
+#include <shellapi.h>
+
+static bool isRunningAsAdmin() {
+    BOOL isAdmin = FALSE;
+    HANDLE token = nullptr;
+    if (OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &token)) {
+        TOKEN_ELEVATION elevation;
+        DWORD cbSize = sizeof(TOKEN_ELEVATION);
+        if (GetTokenInformation(token, TokenElevation, &elevation, sizeof(elevation), &cbSize)) {
+            isAdmin = elevation.TokenIsElevated;
+        }
+        CloseHandle(token);
+    }
+    return isAdmin != FALSE;
+}
+
+static bool relaunchAsAdmin(int argc, char *argv[]) {
+    wchar_t szPath[MAX_PATH];
+    if (GetModuleFileNameW(nullptr, szPath, MAX_PATH) == 0) {
+        return false;
+    }
+
+    QStringList args;
+    for (int i = 1; i < argc; ++i) {
+        QString arg = QString::fromLocal8Bit(argv[i]);
+        if (arg.contains(QLatin1Char(' ')) || arg.contains(QLatin1Char('\t'))) {
+            arg = QStringLiteral("\"") + arg + QStringLiteral("\"");
+        }
+        args.append(arg);
+    }
+    std::wstring params = args.join(QStringLiteral(" ")).toStdWString();
+
+    SHELLEXECUTEINFOW sei = { sizeof(SHELLEXECUTEINFOW) };
+    sei.lpVerb = L"runas";
+    sei.lpFile = szPath;
+    sei.lpParameters = params.empty() ? nullptr : params.c_str();
+    sei.nShow = SW_NORMAL;
+
+    return ShellExecuteExW(&sei) != FALSE;
+}
+#endif
+
 #if defined(__linux__)
 #include <malloc.h>
 #endif
 
 int main(int argc, char *argv[]) {
+#if defined(_WIN32)
+    if (!isRunningAsAdmin()) {
+        relaunchAsAdmin(argc, argv);
+        return 0;
+    }
+#endif
     qputenv("QT_QUICK_CONTROLS_STYLE", "Basic");
     QApplication app(argc, argv);
     app.setApplicationName(QStringLiteral("BeaxtyVPN"));
@@ -214,13 +264,8 @@ int main(int argc, char *argv[]) {
         }
     }, Qt::QueuedConnection);
 
-    // Fallback search local directory if qrc is used
-    if (QFile::exists(QStringLiteral("src/ui/qml/App.qml"))) {
-        qmlEngine.addImportPath(QStringLiteral("src/ui/qml"));
-        qmlEngine.load(QUrl::fromLocalFile(QDir::current().absoluteFilePath(QStringLiteral("src/ui/qml/App.qml"))));
-    } else {
-        qmlEngine.load(url);
-    }
+    // Always run the UI embedded in this build, independent of the launch directory.
+    qmlEngine.load(url);
 
 #if defined(__linux__)
     malloc_trim(0);

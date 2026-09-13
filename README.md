@@ -1,5 +1,7 @@
 # BeaxtyVPN
 
+For this independent working copy, see [local changes, build instructions, and verified limitations](LOCAL_CHANGES.md). Build and run from `build-local`.
+
 **BeaxtyVPN** is a lightweight, high-performance desktop VPN client for Linux. It wraps the proven upstream core of [Throne](https://github.com/throneproj/Throne) (sing-box + Xray daemon, SQLite configuration database, routing rule engine, and subscription parser) while replacing its legacy QWidget interface with a modern, card-based Qt 6 Quick / QML user interface inspired by **INCY** and strict monochrome / OLED black & white aesthetics (`#0A0A0A`).
 
 Licensed under the **GNU General Public License v3.0 (GPL-3.0)**.

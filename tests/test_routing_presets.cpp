@@ -28,10 +28,8 @@ int main(int argc, char *argv[]) {
 
     ToastManager toastManager;
     QString lastToast;
-    BridgeCallbacks::onShowToast = [&](const QString &title, const QString &msg, bool err) {
-        lastToast = msg;
-        std::cout << "  [Toast] " << msg.toStdString() << std::endl;
-    };
+    QObject::connect(&toastManager, &ToastManager::toastRequested, &app,
+        [&](const QString &msg, const QString &, int) { lastToast = msg; });
 
     ThroneEngine engine;
     TrafficMonitor trafficMonitor;
@@ -99,6 +97,12 @@ int main(int argc, char *argv[]) {
     }
     assert(restartedRoutingManager.advancedRules().size() == 3);
     std::cout << "  Persistence verified: Preset 2 and 3 advanced rules successfully restored from SQLite!" << std::endl;
+
+    // Live tunnel tests require an explicitly requested integration run.
+    if (!app.arguments().contains("--integration")) {
+        std::cout << "PASS: routing preset persistence and rule CRUD (live tunnel not requested)\n";
+        return 0;
+    }
 
     // 5. Hot-Switching on Connected VPN:
     std::cout << "\n[5] Testing Hot-Switching of Routing Mode while VPN is Connected..." << std::endl;

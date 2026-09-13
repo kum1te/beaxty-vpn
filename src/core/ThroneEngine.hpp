@@ -109,6 +109,7 @@ signals:
 
 private:
     void setState(State s);
+    void doStartConnection();
     bool spawnCoreDaemon();
     bool connectToCoreRpc();
     void stopTrafficLooper();
@@ -136,4 +137,5 @@ private:
     // Set while a stop is a deliberate user action, so onCoreExited() can tell a
     // crash apart from an orderly shutdown and only then trip the kill switch.
     bool m_intentionalStop = false;
+    bool m_userWantsConnect = false;
 };

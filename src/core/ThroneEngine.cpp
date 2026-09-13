@@ -482,6 +482,26 @@ bool ThroneEngine::initialize(const QString &dbPath, const QString &coreBinaryPa
 }
 
 bool ThroneEngine::spawnCoreDaemon() {
+    if (m_coreProcess) {
+        m_coreProcess->disconnect(this);
+        if (m_coreProcess->state() != QProcess::NotRunning) {
+            m_coreProcess->terminate();
+            if (!m_coreProcess->waitForFinished(1000)) {
+                m_coreProcess->kill();
+                m_coreProcess->waitForFinished(500);
+            }
+        }
+        delete m_coreProcess;
+        m_coreProcess = nullptr;
+    }
+
+    if (m_rpcSocket) {
+        m_rpcSocket->disconnect(this);
+        m_rpcSocket->close();
+        delete m_rpcSocket;
+        m_rpcSocket = nullptr;
+    }
+
     m_socketPath = QStringLiteral("beaxtyIPC-%1").arg(QUuid::createUuid().toString(QUuid::WithoutBraces));
     if (m_localServer) {
         m_localServer->close();
@@ -507,6 +527,10 @@ bool ThroneEngine::spawnCoreDaemon() {
         }
         if (Configs::dataManager && Configs::dataManager->settingsRepo) {
             Configs::dataManager->settingsRepo->core_running = true;
+        }
+        if (m_userWantsConnect && m_state == Disconnected) {
+            qDebug() << "[ThroneEngine] Core daemon ready, auto-starting requested connection...";
+            startConnection();
         }
     });
 
@@ -555,7 +579,11 @@ void ThroneEngine::toggleConnect() {
 
 void ThroneEngine::startConnection() {
     if (m_state == Protected || m_state == Connecting) return;
+    m_userWantsConnect = true;
+    doStartConnection();
+}
 
+void ThroneEngine::doStartConnection() {
     m_intentionalStop = false;
     if (m_failoverAttempts == 0) {
         m_failedServerIds.clear();
@@ -659,7 +687,7 @@ void ThroneEngine::startConnection() {
 
         // Post completion to main GUI thread
         QMetaObject::invokeMethod(this, [this, rpcOK, rpcErr, profileName, chainGroups]() {
-            if (m_state != Connecting) {
+            if (m_state != Connecting || !m_userWantsConnect) {
                 // Connection was stopped/cancelled while start was in-flight
                 if (rpcOK && rpcErr.isEmpty() && API::defaultClient && m_rpcSocket && m_rpcSocket->isOpen()) {
                     bool stopped = false;
@@ -677,7 +705,7 @@ void ThroneEngine::startConnection() {
                 if (lower.contains("operation not permitted") || 
                     lower.contains("permission denied") || 
                     lower.contains("cap_net_admin") || 
-                    lower.contains("tun")) {
+                    lower.contains("not authorized")) {
                     userErr = QStringLiteral("Требуются права суперпользователя для настройки TUN/маршрутизации.");
                     requestElevateCapabilities();
                 }
@@ -737,6 +765,7 @@ void ThroneEngine::stopConnection() {
     if (m_state == Disconnected) return;
 
     m_intentionalStop = true;
+    m_userWantsConnect = false;
     m_failoverAttempts = 0;
     m_failedServerIds.clear();
     stopTrafficLooper();
@@ -765,11 +794,31 @@ void ThroneEngine::stopConnection() {
 
 void ThroneEngine::restartConnection() {
     if (m_state == Disconnected) return;
-    stopConnection();
-    QTimer::singleShot(400, this, [this]() {
-        startConnection();
+
+    m_intentionalStop = true;
+    m_userWantsConnect = true;
+    setState(Connecting);
+    m_statusMessage = QStringLiteral("Connecting...");
+    emit statusMessageChanged(m_statusMessage);
+
+    stopTrafficLooper();
+
+    QThreadPool::globalInstance()->start([this]() {
+        bool rpcOK = false;
+        if (API::defaultClient && m_rpcSocket && m_rpcSocket->isOpen()) {
+            API::defaultClient->Stop(&rpcOK);
+        }
+        // Yield to allow OS kernel to cleanly tear down previous TUN interface
+        QThread::msleep(150);
+
+        QMetaObject::invokeMethod(this, [this]() {
+            if (m_userWantsConnect && m_state == Connecting) {
+                doStartConnection();
+            }
+        });
     });
 }
+
 
 void ThroneEngine::requestQuit() {
     emit quitRequested();
@@ -842,11 +891,57 @@ void ThroneEngine::requestElevateCapabilities() {
 #ifdef Q_OS_LINUX
     qDebug() << "[ThroneEngine] Elevating permissions for core daemon (SUID root):" << corePath;
     QString scriptPath = QDir::current().absoluteFilePath(QStringLiteral("scripts/setup-cap.sh"));
-    if (QFile::exists(scriptPath)) {
-        QProcess::startDetached(QStringLiteral("pkexec"), {QStringLiteral("/bin/bash"), scriptPath});
+
+    QProcess *proc = new QProcess(this);
+    connect(proc, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished), this,
+            [this, proc](int exitCode, QProcess::ExitStatus exitStatus) {
+        proc->deleteLater();
+        if (exitCode == 0 && exitStatus == QProcess::NormalExit) {
+            qDebug() << "[ThroneEngine] Elevation succeeded. Restarting core daemon...";
+            if (ToastManager::instance()) {
+                ToastManager::instance()->showSuccess(QStringLiteral("Права успешно повышены."));
+            }
+            if (m_coreProcess) {
+                m_intentionalStop = true;
+                m_coreProcess->terminate();
+                if (!m_coreProcess->waitForFinished(1500)) {
+                    m_coreProcess->kill();
+                    m_coreProcess->waitForFinished(500);
+                }
+            }
+            spawnCoreDaemon();
+            if (m_userWantsConnect) {
+                QTimer::singleShot(600, this, [this]() {
+                    if (m_userWantsConnect && m_state == Disconnected && m_rpcSocket && m_rpcSocket->isOpen()) {
+                        qDebug() << "[ThroneEngine] Auto-resuming connection after capability elevation...";
+                        startConnection();
+                    }
+                });
+            }
+        } else {
+            qWarning() << "[ThroneEngine] Elevation failed or cancelled, exit code:" << exitCode;
+            m_userWantsConnect = false;
+            if (ToastManager::instance()) {
+                ToastManager::instance()->showError(QStringLiteral("Повышение прав отменено или не удалось."));
+            }
+        }
+    });
+
+    QString pkexec = QStandardPaths::findExecutable(QStringLiteral("pkexec"));
+    if (!pkexec.isEmpty()) {
+        if (QFile::exists(scriptPath)) {
+            proc->start(pkexec, {QStringLiteral("/bin/bash"), scriptPath, corePath});
+        } else {
+            QString cmd = QStringLiteral("chown root:root \"%1\" && chmod 4755 \"%1\"").arg(corePath);
+            proc->start(pkexec, {QStringLiteral("sh"), QStringLiteral("-c"), cmd});
+        }
     } else {
-        QString cmd = QStringLiteral("chown root:root \"%1\" && chmod 4755 \"%1\"").arg(corePath);
-        QProcess::startDetached(QStringLiteral("pkexec"), {QStringLiteral("sh"), QStringLiteral("-c"), cmd});
+        if (QFile::exists(scriptPath)) {
+            proc->start(QStringLiteral("/bin/bash"), {scriptPath, corePath});
+        } else {
+            proc->start(QStringLiteral("sudo"), {QStringLiteral("sh"), QStringLiteral("-c"),
+                        QStringLiteral("chown root:root \"%1\" && chmod 4755 \"%1\"").arg(corePath)});
+        }
     }
 
     if (ToastManager::instance()) {

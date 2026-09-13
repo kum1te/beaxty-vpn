@@ -6,6 +6,7 @@
 #include <QQmlContext>
 #include <QQuickWindow>
 #include <QQuickItem>
+#include <QKeyEvent>
 #include <QTimer>
 #include <QDir>
 #include <QFile>
@@ -13,6 +14,7 @@
 #include <iostream>
 #include <vector>
 #include <functional>
+#include <cmath>
 
 #include "src/core/ThroneEngine.hpp"
 #include "src/core/ConfigAdapter.hpp"
@@ -52,10 +54,15 @@ int main(int argc, char *argv[]) {
     engine.initialize(dbPath);
     routingManager.initializeRouteProfiles();
 
+    configAdapter.setAutoUpdateSubsMode(0);
     configAdapter.setDemoDataEnabled(true);
     configAdapter.reloadServers();
 
     QQmlApplicationEngine qmlEngine;
+    QObject::connect(&qmlEngine, &QQmlEngine::warnings, &app, [](const QList<QQmlError> &errors) {
+        for (const auto &error : errors) std::cerr << error.toString().toStdString() << '\n';
+        std::exit(1);
+    });
     qmlEngine.rootContext()->setContextProperty(QStringLiteral("Theme"), &theme);
     qmlEngine.rootContext()->setContextProperty(QStringLiteral("toastManager"), &toastManager);
     qmlEngine.rootContext()->setContextProperty(QStringLiteral("throneEngine"), &engine);
@@ -85,16 +92,56 @@ int main(int argc, char *argv[]) {
     }
 
     window->show();
+    window->setProperty("sidebarCollapsed", false);
 
-    auto grab = [window](const QString &path) {
+    int trafficSamples = 0;
+    QTimer geometryMonitor;
+    QObject::connect(&geometryMonitor, &QTimer::timeout, &app, [&]() {
+        auto sidebar = window->findChild<QQuickItem *>("sidebar");
+        if (!sidebar || sidebar->width() < 67.5 || sidebar->width() > 220.5) {
+            std::cerr << "Sidebar width outside animation bounds\n";
+            std::exit(1);
+        }
+        QList<QQuickItem *> fills = window->findChildren<QQuickItem *>("trafficUsageFill");
+        if (fills.isEmpty() && window->contentItem()) {
+            std::function<void(QQuickItem *)> scan = [&](QQuickItem *it) {
+                if (!it) return;
+                if (it->objectName() == QStringLiteral("trafficUsageFill")) fills.append(it);
+                for (auto c : it->childItems()) scan(c);
+            };
+            scan(window->contentItem());
+        }
+        for (auto fill : fills) {
+            if (!fill->isVisible()) continue;
+            ++trafficSamples;
+            const auto trackWidth = fill->parentItem()->width();
+            const auto ratio = fill->property("fillRatio").toDouble();
+            if (fill->width() < 0 || fill->width() > trackWidth + 0.1 ||
+                std::abs(fill->width() - trackWidth * ratio) > 0.1) {
+                std::cerr << "Traffic fill lagged behind its track or overflowed\n";
+                std::exit(1);
+            }
+        }
+    });
+    geometryMonitor.start(16);
+
+    const QString captureDir = qEnvironmentVariable("BEAXTY_CAPTURE_DIR", "build-local/ui-captures");
+    QDir().mkpath(captureDir);
+    auto grab = [window, captureDir](const QString &path) {
         QCoreApplication::processEvents();
         window->requestUpdate();
         QCoreApplication::processEvents();
         QImage img = window->grabWindow();
         if (!img.isNull()) {
-            img.save(path);
+            if (!img.save(captureDir + "/" + QFileInfo(path).fileName())) {
+                std::cerr << "Failed to save screenshot\n";
+                std::exit(1);
+            }
             std::cout << "[UI Capture] " << path.toStdString()
                       << " (" << img.width() << "x" << img.height() << ")" << std::endl;
+        } else {
+            std::cerr << "Screenshot capture returned an empty image\n";
+            std::exit(1);
         }
     };
 
@@ -140,13 +187,13 @@ int main(int argc, char *argv[]) {
         grab("build/beaxty_dashboard_1920x1080.png");
         window->resize(960, 640);
         // Test collapsed sidebar
-        appPrefsService.setBool(QStringLiteral("sidebar_collapsed"), true);
+        QMetaObject::invokeMethod(window, "toggleSidebar");
     }, 450});
 
     // 4b. Dashboard with Collapsed Sidebar: 960x640
     steps->push_back({[&]() {
         grab("build/beaxty_dashboard_collapsed.png");
-        appPrefsService.setBool(QStringLiteral("sidebar_collapsed"), false);
+        QMetaObject::invokeMethod(window, "toggleSidebar");
     }, 450});
 
     // 5. Nodes View: 960x640
@@ -154,6 +201,37 @@ int main(int argc, char *argv[]) {
         grab("build/beaxty_dashboard_connected.png");
         setView(1); // Nodes View
     }, 450});
+
+    // Reverse an in-flight animation and resize while the traffic track moves.
+    steps->push_back({[&]() {
+        QMetaObject::invokeMethod(window, "toggleSidebar");
+    }, 70});
+    steps->push_back({[&]() {
+        grab("build/beaxty_nodes_sidebar_mid_transition.png");
+        QMetaObject::invokeMethod(window, "toggleSidebar");
+        window->resize(840, 560);
+    }, 70});
+    steps->push_back({[&]() {
+        QMetaObject::invokeMethod(window, "toggleSidebar");
+    }, 300});
+    steps->push_back({[&]() {
+        auto sidebar = window->findChild<QQuickItem *>("sidebar");
+        if (!sidebar || std::abs(sidebar->width() - 68) > 0.5) std::exit(1);
+        grab("build/beaxty_nodes_sidebar_collapsed.png");
+        QMetaObject::invokeMethod(window, "toggleSidebar");
+        window->resize(960, 640);
+        setView(3);
+    }, 50});
+    steps->push_back({[&]() { setView(2); }, 50});
+    steps->push_back({[&]() { setView(1); }, 300});
+    steps->push_back({[&]() {
+        auto sidebar = window->findChild<QQuickItem *>("sidebar");
+        if (!sidebar || std::abs(sidebar->width() - 220) > 0.5 || trafficSamples == 0) {
+            std::cerr << "Expanded width: " << (sidebar ? sidebar->width() : -1)
+                      << "; traffic samples: " << trafficSamples << '\n';
+            std::exit(1);
+        }
+    }, 50});
 
     // 6. Nodes View: 960x640
     steps->push_back({[&]() {
@@ -209,6 +287,11 @@ int main(int argc, char *argv[]) {
 
     // 6c. Import Sheet Dark Mode
     steps->push_back({[&]() {
+        auto input = window->findChild<QQuickItem *>("inputField");
+        if (!input || !input->hasActiveFocus()) {
+            std::cerr << "Import input did not receive keyboard focus\n";
+            std::exit(1);
+        }
         grab("build/beaxty_import_sheet_dark.png");
         theme.setThemeMode(Theme::Light);
     }, 450});
@@ -265,6 +348,7 @@ int main(int argc, char *argv[]) {
     steps->push_back({[&]() {
         grab("build/beaxty_empty_nodes_promo_en.png");
         locManager.setLanguage(QStringLiteral("ru"));
+        configAdapter.setAutoUpdateSubsMode(0);
         configAdapter.setDemoDataEnabled(true);
         configAdapter.reloadServers();
         window->resize(840, 560);
@@ -350,13 +434,13 @@ int main(int argc, char *argv[]) {
     // 16. Dashboard Light Theme: 960x640
     steps->push_back({[&]() {
         grab("build/beaxty_light_dashboard.png");
-        appPrefsService.setBool(QStringLiteral("sidebar_collapsed"), true);
+        QMetaObject::invokeMethod(window, "toggleSidebar");
     }, 450});
 
     // 16b. Dashboard Light Theme Collapsed Sidebar
     steps->push_back({[&]() {
         grab("build/beaxty_light_dashboard_collapsed.png");
-        appPrefsService.setBool(QStringLiteral("sidebar_collapsed"), false);
+        QMetaObject::invokeMethod(window, "toggleSidebar");
         setView(1); // Nodes View in Light Theme
     }, 450});
 
@@ -392,6 +476,27 @@ int main(int argc, char *argv[]) {
         grab("build/beaxty_english_settings.png");
         locManager.setLanguage(QStringLiteral("ru"));
     }, 350});
+
+    // Verify the import sheet after a live resize, long input, and keyboard dismissal.
+    steps->push_back({[&]() {
+        window->resize(840, 560);
+        QMetaObject::invokeMethod(window, "openImportSheet");
+    }, 350});
+    steps->push_back({[&]() {
+        auto input = window->findChild<QQuickItem *>("inputField");
+        if (!input) std::exit(1);
+        input->setProperty("text", QString(1000, 'x'));
+        grab("build/beaxty_import_minimum_long_text.png");
+        QKeyEvent escape(QEvent::KeyPress, Qt::Key_Escape, Qt::NoModifier);
+        QCoreApplication::sendEvent(window, &escape);
+    }, 350});
+    steps->push_back({[&]() {
+        auto sheet = window->findChild<QQuickItem *>("importSheet");
+        if (!sheet || sheet->isVisible()) {
+            std::cerr << "Escape did not dismiss import sheet\n";
+            std::exit(1);
+        }
+    }, 50});
 
     // 20. Finish
     steps->push_back({[&]() {

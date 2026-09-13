@@ -10,7 +10,8 @@ Rectangle {
     property alias text: textInput.text
     property string placeholder: "Search nodes..."
 
-    height: 40
+    implicitHeight: 40
+    height: implicitHeight
     radius: 12
     color: Theme.cardBg
     border.color: textInput.activeFocus ? Theme.textSecondary : Theme.cardBorder
@@ -34,7 +35,7 @@ Rectangle {
 
         Item {
             anchors.verticalCenter: parent.verticalCenter
-            width: parent.width - 52
+            width: Math.max(0, parent.width - 52)
             height: parent.height
 
             TextInput {
@@ -44,6 +45,9 @@ Rectangle {
                 color: Theme.textPrimary
                 font.pixelSize: 13
                 selectByMouse: true
+                clip: true
+                activeFocusOnTab: true
+                Keys.onEscapePressed: textInput.text = ""
 
                 Text {
                     anchors.fill: parent
@@ -68,7 +72,10 @@ Rectangle {
             MouseArea {
                 anchors.fill: parent
                 cursorShape: Qt.PointingHandCursor
-                onClicked: textInput.text = ""
+                onClicked: {
+                    textInput.text = "";
+                    textInput.forceActiveFocus();
+                }
             }
         }
     }

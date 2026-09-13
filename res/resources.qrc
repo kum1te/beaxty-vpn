@@ -11,6 +11,7 @@
         <file alias="components/ToastNotification.qml">../src/ui/qml/components/ToastNotification.qml</file>
         <file alias="components/ImportSheet.qml">../src/ui/qml/components/ImportSheet.qml</file>
         <file alias="components/AmbientBackground.qml">../src/ui/qml/components/AmbientBackground.qml</file>
+        <file alias="components/SectionPage.qml">../src/ui/qml/components/SectionPage.qml</file>
         <file alias="components/NavItem.qml">../src/ui/qml/components/NavItem.qml</file>
         <file alias="components/ToggleRow.qml">../src/ui/qml/components/ToggleRow.qml</file>
         <file alias="components/PresetCard.qml">../src/ui/qml/components/PresetCard.qml</file>

@@ -7,6 +7,7 @@ import ".."
 Item {
     id: root
     anchors.fill: parent
+    property bool animationsEnabled: true
 
     readonly property int vpnState: (typeof throneEngine !== "undefined") ? throneEngine.state : 0
     // 0: Disconnected, 1: Connecting, 2: Protected
@@ -26,6 +27,7 @@ Item {
         duration: 300000 // 5 minutes continuous smooth cycle
         loops: Animation.Infinite
         running: true
+        paused: running && !root.animationsEnabled
     }
 
     // Procedural Halftone Wave ShaderEffect

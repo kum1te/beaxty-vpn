@@ -323,6 +323,13 @@ if (APPLE)
     )
 endif ()
 
+if (WIN32)
+    target_sources(beaxty-vpn PRIVATE res/windows.rc)
+    if (MSVC)
+        set_target_properties(beaxty-vpn PROPERTIES LINK_FLAGS "/MANIFESTUAC:\"level='requireAdministrator' uiAccess='false'\"")
+    endif()
+endif()
+
 target_link_libraries(beaxty-vpn PRIVATE
     beaxty_core
     Qt6::Quick
@@ -336,6 +343,7 @@ foreach(_beaxty_test
     test_hwid
     test_config_builder
     test_subscription_import
+    test_subscription_safety
     test_connect_responsiveness
     test_traffic_looper_lifecycle
     test_routing_presets
@@ -359,3 +367,17 @@ target_link_libraries(test_capture_ui PRIVATE
 
 
 
+
+# Deterministic, local checks available through one standard command.
+enable_testing()
+foreach(_test test_hwid test_config_builder test_subscription_import test_subscription_safety
+              test_routing_presets test_full_tunnel_wiring test_per_app_routing)
+    add_test(NAME ${_test} COMMAND ${_test})
+    set_tests_properties(${_test} PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 60)
+    # Existing tests use assert(); keep their checks active in Release builds.
+    if(MSVC)
+        target_compile_options(${_test} PRIVATE /UNDEBUG)
+    else()
+        target_compile_options(${_test} PRIVATE -UNDEBUG)
+    endif()
+endforeach()

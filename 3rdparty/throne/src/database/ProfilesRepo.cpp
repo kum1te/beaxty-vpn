@@ -229,7 +229,7 @@ namespace Configs {
             toAdd[i]->id = id;
             if (toAdd[i]->outbound) toAdd[i]->outbound->profile_id = id;
             toAdd[i]->gid = gid;
-            identityMap[id] = std::weak_ptr<Profile>(toAdd[i]);
+
         }
 
         std::vector<ProfileInsertRow> rows;
@@ -237,7 +237,20 @@ namespace Configs {
         for (int i = 0; i < n; ++i) {
             rows.push_back(profileToInsertRow(toAdd[i].get(), toAdd[i]->id, toAdd[i]->gid));
         }
-        db.execBatchInsertProfiles(rows);
+        try {
+            db.execThrow("BEGIN IMMEDIATE");
+            db.execBatchInsertProfilesThrow(rows);
+            db.execThrow("COMMIT");
+        } catch (const std::exception &e) {
+            try { db.execThrow("ROLLBACK"); } catch (...) {}
+            for (auto &profile : toAdd) {
+                profile->id = -1;
+                if (profile->outbound) profile->outbound->profile_id = -1;
+            }
+            NotifyError("AddProfileBatch", e);
+            return false;
+        }
+        for (const auto &profile : toAdd) identityMap[profile->id] = profile;
 
         QList<int> profileIDs;
         for (const auto& profile : toAdd) {

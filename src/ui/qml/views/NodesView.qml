@@ -113,7 +113,8 @@ Item {
                 }
 
                 ActionButton {
-                    text: qsTr("Обновить все")
+                    busy: typeof configAdapter !== "undefined" && configAdapter.refreshing
+                    text: busy ? qsTr("Обновление...") : qsTr("Обновить все")
                     onClicked: {
                         if (typeof configAdapter !== "undefined") configAdapter.refreshSubscriptions()
                     }
@@ -783,15 +784,16 @@ Item {
                                                 color: Theme.accentDim
 
                                                 Rectangle {
-                                                    width: parent.parent.unlimited
-                                                           ? parent.width
-                                                           : Math.max(6, Math.min(parent.width, parent.width * (modelData.trafficPercent || 0)))
+                                                    objectName: "trafficUsageFill"
+                                                    property real fillRatio: parent.parent.unlimited ? 1
+                                                        : Math.max(0, Math.min(1, modelData.trafficPercent || 0))
+                                                    width: parent.width * fillRatio
                                                     height: parent.height
                                                     radius: 2.5
                                                     color: parent.parent.unlimited ? Theme.statusMedium
                                                          : ((modelData.trafficPercent || 0) > 0.9 ? Theme.accentWhite
                                                                                                   : Theme.statusMedium)
-                                                    Behavior on width { NumberAnimation { duration: Theme.durationSlow; easing.type: Easing.OutCubic } }
+                                                    Behavior on fillRatio { NumberAnimation { duration: Theme.durationSlow; easing.type: Easing.OutCubic } }
                                                 }
                                             }
                                         }

@@ -15,6 +15,7 @@ Rectangle {
     property url iconSource: ""
     property bool active: false
     property bool collapsed: false
+    property real collapseProgress: collapsed ? 1 : 0
 
     signal clicked()
 
@@ -41,19 +42,16 @@ Rectangle {
         Behavior on opacity { NumberAnimation { duration: 180 } }
     }
 
-    RowLayout {
+    Item {
         anchors.fill: parent
-        anchors.leftMargin: root.collapsed ? 0 : 14
-        anchors.rightMargin: root.collapsed ? 0 : 14
-        spacing: root.collapsed ? 0 : 12
-
-        Behavior on anchors.leftMargin { NumberAnimation { duration: 200 } }
-        Behavior on anchors.rightMargin { NumberAnimation { duration: 200 } }
+        clip: true
 
         Image {
-            Layout.preferredWidth: 18
-            Layout.preferredHeight: 18
-            Layout.alignment: root.collapsed ? Qt.AlignHCenter : Qt.AlignVCenter
+            id: navIcon
+            x: 14 + ((parent.width - width) / 2 - 14) * root.collapseProgress
+            anchors.verticalCenter: parent.verticalCenter
+            width: 18
+            height: 18
             sourceSize.width: 18
             sourceSize.height: 18
             source: Theme.icon(root.iconSource, Theme.isDark)
@@ -62,16 +60,16 @@ Rectangle {
         }
 
         Text {
-            Layout.fillWidth: !root.collapsed
-            visible: opacity > 0.01
-            opacity: root.collapsed ? 0.0 : 1.0
+            x: navIcon.x + navIcon.width + 12
+            anchors.verticalCenter: parent.verticalCenter
+            width: 138
+            opacity: 1 - root.collapseProgress
             text: root.label
             elide: Text.ElideRight
             color: root.active ? Theme.textPrimary : Theme.textSecondary
             font.pixelSize: 13
             font.bold: root.active
             Behavior on color { ColorAnimation { duration: 150 } }
-            Behavior on opacity { NumberAnimation { duration: 180 } }
         }
     }
 

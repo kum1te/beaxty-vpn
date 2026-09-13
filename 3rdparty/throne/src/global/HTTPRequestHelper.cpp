@@ -19,13 +19,34 @@
 namespace Configs_network {
 
     HTTPResponse NetworkRequestHelper::HttpGet(const QString &url, bool sendHwid, bool useProxy, qint64 maxBytes) {
+        QEventLoop loop;
+        HTTPResponse result;
+        bool finished = false;
+        HttpGetAsync(&loop, url, sendHwid, useProxy, maxBytes, [&](HTTPResponse response) {
+            result = std::move(response);
+            finished = true;
+            loop.quit();
+        });
+        if (!finished) loop.exec();
+        return result;
+    }
+
+    void NetworkRequestHelper::HttpGetAsync(QObject *context, const QString &url, bool sendHwid,
+                                            bool useProxy, qint64 maxBytes,
+                                            std::function<void(HTTPResponse)> done) {
+        if (!Configs::dataManager || !Configs::dataManager->settingsRepo) {
+            done(HTTPResponse{QObject::tr("Database is not ready.")});
+            return;
+        }
         QNetworkRequest request;
-        QNetworkAccessManager accessManager;
-        accessManager.setTransferTimeout(10000);
+        auto accessManager = new QNetworkAccessManager(context);
+        accessManager->setTransferTimeout(10000);
         request.setUrl(url);
         if (Configs::dataManager->settingsRepo->net_use_proxy || Configs::dataManager->settingsRepo->spmode_system_proxy || useProxy) {
             if (Configs::dataManager->settingsRepo->started_id < 0) {
-                return HTTPResponse{QObject::tr("Request with proxy but no profile started.")};
+                accessManager->deleteLater();
+                done(HTTPResponse{QObject::tr("Request with proxy but no profile started.")});
+                return;
             }
             QNetworkProxy p;
             p.setType(QNetworkProxy::HttpProxy);
@@ -35,7 +56,7 @@ namespace Configs_network {
                 p.setUser(Configs::dataManager->settingsRepo->inbound_user);
                 p.setPassword(Configs::dataManager->settingsRepo->inbound_pass);
             }
-            accessManager.setProxy(p);
+            accessManager->setProxy(p);
         }
         request.setAttribute(QNetworkRequest::RedirectPolicyAttribute, QNetworkRequest::NoLessSafeRedirectPolicy);
         request.setHeader(QNetworkRequest::KnownHeaders::UserAgentHeader, Configs::dataManager->settingsRepo->GetUserAgent());
@@ -79,43 +100,37 @@ namespace Configs_network {
             if (!osVersion.isEmpty()) request.setRawHeader("x-ver-os", osVersion.toUtf8());
             if (!model.isEmpty()) request.setRawHeader("x-device-model", model.toUtf8());
         }
-        auto _reply = accessManager.get(request);
-        connect(_reply, &QNetworkReply::sslErrors, _reply, [](const QList<QSslError> &errors) {
-            QStringList error_str;
-            for (const auto &err: errors) {
-                error_str << err.errorString();
-            }
-            MW_show_log(QString("SSL Errors: %1 %2").arg(error_str.join(","), Configs::dataManager->settingsRepo->net_insecure ? "(Ignored)" : ""));
-        });
-        QByteArray body;
-        bool tooLarge = false;
-        connect(_reply, &QNetworkReply::readyRead, _reply, [&] {
-            if (body.isEmpty()) {
-                const auto expected = _reply->header(QNetworkRequest::ContentLengthHeader).toLongLong();
-                const qint64 reserveCap = maxBytes > 0 ? maxBytes : 256LL * 1024 * 1024;
-                if (expected > 0 && expected <= reserveCap) body.reserve(static_cast<qsizetype>(expected));
-            }
-            body += _reply->readAll();
-            if (maxBytes > 0 && body.size() > maxBytes) {
-                tooLarge = true;
-                _reply->abort();
+        auto reply = accessManager->get(request);
+        auto body = std::make_shared<QByteArray>();
+        auto tooLarge = std::make_shared<bool>(false);
+        // Bound both memory consumption and total request duration, including slow streams.
+        reply->setReadBufferSize(64 * 1024);
+        auto deadline = new QTimer(reply);
+        deadline->setSingleShot(true);
+        connect(deadline, &QTimer::timeout, reply, &QNetworkReply::abort);
+        deadline->start(30000);
+        connect(reply, &QNetworkReply::readyRead, reply, [reply, body, tooLarge, maxBytes] {
+            *body += reply->readAll();
+            if (maxBytes > 0 && body->size() > maxBytes) {
+                *tooLarge = true;
+                reply->abort();
             }
         });
-        QEventLoop loop;
-        connect(_reply, &QNetworkReply::finished, &loop, &QEventLoop::quit);
-        loop.exec();
-        body += _reply->readAll();
-
-        HTTPResponse result;
-        result.header = _reply->rawHeaderPairs();
-        if (tooLarge) {
-            result.error = QObject::tr("Response larger than %1 MB").arg(maxBytes / (1024 * 1024));
-        } else {
-            result.error = _reply->error() == QNetworkReply::NetworkError::NoError ? "" : _reply->errorString();
-            result.data = std::move(body);
-        }
-        _reply->deleteLater();
-        return result;
+        connect(reply, &QNetworkReply::finished, context,
+                [reply, accessManager, body, tooLarge, maxBytes, done = std::move(done)]() {
+            if (reply->isOpen()) *body += reply->readAll();
+            HTTPResponse result;
+            result.header = reply->rawHeaderPairs();
+            if (*tooLarge || (maxBytes > 0 && body->size() > maxBytes)) {
+                result.error = QObject::tr("Response larger than %1 MB").arg(maxBytes / (1024 * 1024));
+            } else if (reply->error() != QNetworkReply::NoError) {
+                result.error = reply->errorString();
+            } else {
+                result.data = std::move(*body);
+            }
+            accessManager->deleteLater();
+            done(std::move(result));
+        });
     }
 
     QString NetworkRequestHelper::GetHeader(const QList<QPair<QByteArray, QByteArray>> &header, const QString &name) {
