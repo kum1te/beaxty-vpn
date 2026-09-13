@@ -16,7 +16,7 @@ Window {
     minimumWidth: 840
     minimumHeight: 560
     visible: true
-    title: "BeaxtyVPN"
+    title: "beaxty VPN"
     color: Theme.bgDark
 
     function openImportSheet() {

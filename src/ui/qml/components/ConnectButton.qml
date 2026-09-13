@@ -30,50 +30,94 @@ Item {
     }
 
     // ====================================================
-    // Layer 0: Soft ambient aura. Fully off when disconnected.
+    // Layer 0: Concentric vector aura rings when protected.
+    // Pure vector QML, zero Canvas / FBO blur or bleed-through.
     // ====================================================
     Item {
         id: ambientAura
         anchors.centerIn: parent
-        width: parent.width + 90
-        height: parent.height + 90
-        opacity: root.connectionState === 0 ? 0.0 : (root.isProtected ? 0.85 : 0.5)
+        width: parent.width + 80
+        height: parent.height + 80
+        opacity: root.isProtected ? 1.0 : (root.busy ? 0.3 : 0.0)
         visible: opacity > 0.001
         Behavior on opacity { NumberAnimation { duration: Theme.durationSlow } }
 
-        Canvas {
-            anchors.fill: parent
-            renderTarget: Canvas.FramebufferObject
-            onPaint: {
-                var ctx = getContext("2d");
-                ctx.reset();
-                var cx = width / 2;
-                var cy = height / 2;
-                var r = width / 2;
-                var grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, r);
-                grad.addColorStop(0.0, "rgba(255, 255, 255, 0.18)");
-                grad.addColorStop(0.35, "rgba(255, 255, 255, 0.09)");
-                grad.addColorStop(0.70, "rgba(255, 255, 255, 0.02)");
-                grad.addColorStop(1.0, "rgba(255, 255, 255, 0.0)");
-                ctx.fillStyle = grad;
-                ctx.beginPath();
-                ctx.arc(cx, cy, r, 0, 2 * Math.PI, false);
-                ctx.fill();
+        // Ring 1 (inner aura ring)
+        Rectangle {
+            anchors.centerIn: parent
+            width: root.width + 24
+            height: width
+            radius: width / 2
+            color: "transparent"
+            border.color: Theme.accentWhite
+            border.width: 1.5
+            opacity: root.isProtected ? 0.30 : 0.0
+
+            SequentialAnimation on scale {
+                running: root.isProtected
+                loops: Animation.Infinite
+                NumberAnimation { from: 1.0; to: 1.04; duration: 2200; easing.type: Easing.InOutSine }
+                NumberAnimation { from: 1.04; to: 1.0; duration: 2200; easing.type: Easing.InOutSine }
+            }
+
+            SequentialAnimation on opacity {
+                running: root.isProtected
+                loops: Animation.Infinite
+                NumberAnimation { from: 0.30; to: 0.14; duration: 2200; easing.type: Easing.InOutSine }
+                NumberAnimation { from: 0.14; to: 0.30; duration: 2200; easing.type: Easing.InOutSine }
             }
         }
 
-        SequentialAnimation on scale {
-            running: root.isProtected
-            loops: Animation.Infinite
-            NumberAnimation { from: 1.0; to: 1.08; duration: 2400; easing.type: Easing.InOutSine }
-            NumberAnimation { from: 1.08; to: 1.0; duration: 2400; easing.type: Easing.InOutSine }
+        // Ring 2 (mid aura ring)
+        Rectangle {
+            anchors.centerIn: parent
+            width: root.width + 48
+            height: width
+            radius: width / 2
+            color: "transparent"
+            border.color: Theme.accentWhite
+            border.width: 1.0
+            opacity: root.isProtected ? 0.18 : 0.0
+
+            SequentialAnimation on scale {
+                running: root.isProtected
+                loops: Animation.Infinite
+                NumberAnimation { from: 1.01; to: 1.06; duration: 2600; easing.type: Easing.InOutSine }
+                NumberAnimation { from: 1.06; to: 1.01; duration: 2600; easing.type: Easing.InOutSine }
+            }
+
+            SequentialAnimation on opacity {
+                running: root.isProtected
+                loops: Animation.Infinite
+                NumberAnimation { from: 0.18; to: 0.06; duration: 2600; easing.type: Easing.InOutSine }
+                NumberAnimation { from: 0.06; to: 0.18; duration: 2600; easing.type: Easing.InOutSine }
+            }
         }
 
-        SequentialAnimation on opacity {
-            running: root.isProtected
-            loops: Animation.Infinite
-            NumberAnimation { from: 0.85; to: 0.55; duration: 2400; easing.type: Easing.InOutSine }
-            NumberAnimation { from: 0.55; to: 0.85; duration: 2400; easing.type: Easing.InOutSine }
+        // Ring 3 (outer aura ring)
+        Rectangle {
+            anchors.centerIn: parent
+            width: root.width + 72
+            height: width
+            radius: width / 2
+            color: "transparent"
+            border.color: Theme.accentWhite
+            border.width: 1.0
+            opacity: root.isProtected ? 0.08 : 0.0
+
+            SequentialAnimation on scale {
+                running: root.isProtected
+                loops: Animation.Infinite
+                NumberAnimation { from: 1.0; to: 1.05; duration: 3000; easing.type: Easing.InOutSine }
+                NumberAnimation { from: 1.05; to: 1.0; duration: 3000; easing.type: Easing.InOutSine }
+            }
+
+            SequentialAnimation on opacity {
+                running: root.isProtected
+                loops: Animation.Infinite
+                NumberAnimation { from: 0.08; to: 0.02; duration: 3000; easing.type: Easing.InOutSine }
+                NumberAnimation { from: 0.02; to: 0.08; duration: 3000; easing.type: Easing.InOutSine }
+            }
         }
     }
 
@@ -181,6 +225,20 @@ Item {
             to: 360
             duration: 900
         }
+    }
+
+    // ====================================================
+    // Layer 3.5: Solid opaque backing disk.
+    // Guarantees zero bleed-through from background shaders or halftone dots.
+    // ====================================================
+    Rectangle {
+        id: baseDisc
+        anchors.centerIn: parent
+        width: parent.width - 12
+        height: width
+        radius: width / 2
+        color: root.isProtected ? Theme.accentWhite : Theme.controlBg
+        Behavior on color { ColorAnimation { duration: 250 } }
     }
 
     // ====================================================

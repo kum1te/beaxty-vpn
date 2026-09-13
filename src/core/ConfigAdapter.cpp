@@ -915,7 +915,7 @@ void ConfigAdapter::finishImport(const QString &trimmed, const QString &groupNam
                 if (ok && parsed > 0) intervalHours = parsed;
             }
 
-            if (finalGroupName.isEmpty() || finalGroupName == QStringLiteral("Подписка Beaxty")) {
+            if (finalGroupName.isEmpty() || finalGroupName == QStringLiteral("Подписка Beaxty") || finalGroupName == QStringLiteral("Подписка beaxty")) {
                 QString contentDisp = Configs_network::NetworkRequestHelper::GetHeader(resp.header, QStringLiteral("content-disposition"));
                 if (contentDisp.isEmpty()) contentDisp = Configs_network::NetworkRequestHelper::GetHeader(resp.header, QStringLiteral("Content-Disposition"));
                 QString fn;
@@ -934,13 +934,13 @@ void ConfigAdapter::finishImport(const QString &trimmed, const QString &groupNam
                 } else if (!fn.trimmed().isEmpty()) {
                     finalGroupName = fn.trimmed();
                 } else {
-                    finalGroupName = QStringLiteral("Подписка Beaxty");
+                    finalGroupName = QStringLiteral("Подписка beaxty");
                 }
             }
         }
 
         if (finalGroupName.isEmpty()) {
-            finalGroupName = QStringLiteral("Подписка Beaxty");
+            finalGroupName = QStringLiteral("Подписка beaxty");
         }
 
         QList<std::shared_ptr<Configs::Profile>> profiles;

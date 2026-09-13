@@ -121,13 +121,13 @@ int main(int argc, char *argv[]) {
 #endif
     qputenv("QT_QUICK_CONTROLS_STYLE", "Basic");
     QApplication app(argc, argv);
-    app.setApplicationName(QStringLiteral("BeaxtyVPN"));
+    app.setApplicationName(QStringLiteral("beaxty VPN"));
     app.setOrganizationName(QStringLiteral("Beaxty"));
-    app.setApplicationVersion(QStringLiteral("1.0.0"));
+    app.setApplicationVersion(QStringLiteral("1.0.2"));
     app.setWindowIcon(QIcon(QStringLiteral(":/icons/app_icon.svg")));
 
     QCommandLineParser parser;
-    parser.setApplicationDescription(QStringLiteral("BeaxtyVPN Desktop Client"));
+    parser.setApplicationDescription(QStringLiteral("beaxty VPN Desktop Client"));
     parser.addHelpOption();
     parser.addVersionOption();
 
@@ -298,7 +298,7 @@ int main(int argc, char *argv[]) {
     // System Tray Integration
     QSystemTrayIcon trayIcon;
     trayIcon.setIcon(createMonochromeTrayIcon(false));
-    trayIcon.setToolTip(QStringLiteral("BeaxtyVPN — Disconnected"));
+    trayIcon.setToolTip(QStringLiteral("beaxty VPN — Отключено"));
 
     QMenu trayMenu;
 
@@ -342,50 +342,47 @@ int main(int argc, char *argv[]) {
 
         trayMenu.addSeparator();
 
-        // 3. Quick action: Connect / Disconnect
+        // 3. Connect / Disconnect Action
         if (curState == ThroneEngine::Protected) {
             QAction *disconnectAction = trayMenu.addAction(QObject::tr("Отключить"));
-            QObject::connect(disconnectAction, &QAction::triggered, &engine, &ThroneEngine::stopConnection);
+            QObject::connect(disconnectAction, &QAction::triggered, &engine, &ThroneEngine::toggleConnect);
         } else if (curState == ThroneEngine::Connecting) {
             QAction *cancelAction = trayMenu.addAction(QObject::tr("Отменить подключение"));
-            QObject::connect(cancelAction, &QAction::triggered, &engine, &ThroneEngine::stopConnection);
+            QObject::connect(cancelAction, &QAction::triggered, &engine, &ThroneEngine::toggleConnect);
         } else {
             QAction *connectAction = trayMenu.addAction(QObject::tr("Подключить"));
-            QObject::connect(connectAction, &QAction::triggered, &engine, &ThroneEngine::startConnection);
+            QObject::connect(connectAction, &QAction::triggered, &engine, &ThroneEngine::toggleConnect);
         }
 
-        // 4. Submenu "Сменить сервер ›"
+        // 4. Quick Server Switcher Submenu
         QMenu *serversSubmenu = trayMenu.addMenu(QObject::tr("Сменить сервер"));
-        auto serversList = configAdapter.servers();
-        int currentId = configAdapter.selectedServerId();
-
-        if (serversList.isEmpty()) {
-            QAction *emptyAction = serversSubmenu->addAction(QObject::tr("Нет доступных серверов"));
-            emptyAction->setEnabled(false);
+        const auto serverList = configAdapter.servers();
+        if (serverList.isEmpty()) {
+            QAction *emptyAct = serversSubmenu->addAction(QObject::tr("Нет доступных серверов"));
+            emptyAct->setEnabled(false);
         } else {
-            QActionGroup *serverGroup = new QActionGroup(serversSubmenu);
-            for (const auto &itemVal : serversList) {
-                auto item = itemVal.toMap();
-                int id = item["id"].toInt();
-                QString name = item["name"].toString();
-                QString sCountry = item["country"].toString();
-                int sPing = item["ping"].toInt();
-                QString sPingStr = (sPing > 0) ? QStringLiteral("%1 ms").arg(sPing) : QStringLiteral("--");
+            int selectedId = configAdapter.selectedServerId();
+            for (const auto &serverVar : serverList) {
+                QVariantMap sm = serverVar.toMap();
+                int id = sm["id"].toInt();
+                QString sName = sm["name"].toString();
+                QString sCountry = sm["country"].toString();
+                int sPing = sm["ping"].toInt();
+                QString sPingStr = (sPing > 0) ? QStringLiteral(" (%1 ms)").arg(sPing) : QString();
 
                 QString sFlag;
                 if (sCountry.length() == 2 && sCountry[0].isLetter() && sCountry[1].isLetter()) {
-                    char32_t sUcs[2] = {
+                    char32_t ucs[2] = {
                         static_cast<char32_t>(0x1F1E6 + (sCountry[0].toUpper().toLatin1() - 'A')),
                         static_cast<char32_t>(0x1F1E6 + (sCountry[1].toUpper().toLatin1() - 'A'))
                     };
-                    sFlag = QString::fromUcs4(sUcs, 2) + QStringLiteral(" ");
+                    sFlag = QString::fromUcs4(ucs, 2) + QStringLiteral(" ");
                 }
 
-                QString title = QStringLiteral("%1%2 (%3)").arg(sFlag, name, sPingStr);
-                QAction *act = serversSubmenu->addAction(title);
+                QString itemText = QStringLiteral("%1%2%3").arg(sFlag, sName, sPingStr);
+                QAction *act = serversSubmenu->addAction(itemText);
                 act->setCheckable(true);
-                act->setChecked(id == currentId);
-                serverGroup->addAction(act);
+                act->setChecked(id == selectedId);
 
                 QObject::connect(act, &QAction::triggered, [&engine, &configAdapter, id]() {
                     bool wasConnected = (engine.state() == ThroneEngine::Protected);
@@ -400,11 +397,11 @@ int main(int argc, char *argv[]) {
         trayMenu.addSeparator();
 
         // 5. Open main window
-        QAction *openAction = trayMenu.addAction(QObject::tr("Открыть окно Beaxty VPN"));
+        QAction *openAction = trayMenu.addAction(QObject::tr("Открыть окно beaxty VPN"));
         QObject::connect(openAction, &QAction::triggered, &app, showMainWindow);
 
         // 6. Quit
-        QAction *quitAction = trayMenu.addAction(QObject::tr("Выход"));
+        QAction *quitAction = trayMenu.addAction(QObject::tr("Выход из beaxty VPN"));
         QObject::connect(quitAction, &QAction::triggered, &app, quitApplication);
     };
 
@@ -426,7 +423,7 @@ int main(int argc, char *argv[]) {
 
     QObject::connect(&engine, &ThroneEngine::minimizedToTray, &app, [&trayIcon]() {
         if (QSystemTrayIcon::supportsMessages()) {
-            trayIcon.showMessage(QStringLiteral("BeaxtyVPN"),
+            trayIcon.showMessage(QStringLiteral("beaxty VPN"),
                                  QStringLiteral("Приложение продолжает работать в трее."),
                                  QSystemTrayIcon::Information, 3000);
         }
@@ -435,13 +432,18 @@ int main(int argc, char *argv[]) {
     QObject::connect(&engine, &ThroneEngine::stateChanged, &app, [&](int state) {
         bool connected = (state == ThroneEngine::Protected);
         trayIcon.setIcon(createMonochromeTrayIcon(connected));
-        trayIcon.setToolTip(QStringLiteral("BeaxtyVPN — ") + engine.stateString());
+        QString status = connected ? QStringLiteral("Защищено") : (state == ThroneEngine::Connecting ? QStringLiteral("Подключение...") : QStringLiteral("Отключено"));
+        trayIcon.setToolTip(QStringLiteral("beaxty VPN — ") + status);
     });
 
     QObject::connect(&configAdapter, &ConfigAdapter::selectedServerChanged, &app, [&]() {
         QString sName = configAdapter.selectedServerName();
+        bool connected = (engine.state() == ThroneEngine::Protected);
+        QString status = connected ? QStringLiteral("Защищено") : (engine.state() == ThroneEngine::Connecting ? QStringLiteral("Подключение...") : QStringLiteral("Отключено"));
         if (!sName.isEmpty()) {
-            trayIcon.setToolTip(QStringLiteral("BeaxtyVPN: ") + sName + QStringLiteral(" — ") + engine.stateString());
+            trayIcon.setToolTip(QStringLiteral("beaxty VPN: ") + sName + QStringLiteral(" — ") + status);
+        } else {
+            trayIcon.setToolTip(QStringLiteral("beaxty VPN — ") + status);
         }
     });
 

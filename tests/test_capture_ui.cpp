@@ -94,6 +94,11 @@ int main(int argc, char *argv[]) {
     window->show();
     window->setProperty("sidebarCollapsed", false);
 
+    if (window->title() != QStringLiteral("beaxty VPN")) {
+        std::cerr << "Window title mismatch! Expected 'beaxty VPN', got '" << window->title().toStdString() << "'\n";
+        return 1;
+    }
+
     int trafficSamples = 0;
     QTimer geometryMonitor;
     QObject::connect(&geometryMonitor, &QTimer::timeout, &app, [&]() {
@@ -196,9 +201,15 @@ int main(int argc, char *argv[]) {
         QMetaObject::invokeMethod(window, "toggleSidebar");
     }, 450});
 
-    // 5. Nodes View: 960x640
+    // 4c. Dashboard: 960x640 Connected (Protected state)
+    steps->push_back({[&]() {
+        engine.setStateForTesting(ThroneEngine::Protected);
+    }, 450});
+
+    // 5. Grab Connected Dashboard, reset state, and switch to Nodes View: 960x640
     steps->push_back({[&]() {
         grab("build/beaxty_dashboard_connected.png");
+        engine.setStateForTesting(ThroneEngine::Disconnected);
         setView(1); // Nodes View
     }, 450});
 

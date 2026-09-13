@@ -306,7 +306,7 @@ static void ensureDictionariesInitialized() {
         {QStringLiteral("Автопереключение при обрыве (Failover)"), QStringLiteral("Connection Failover")},
         {QStringLiteral("Автоматически переподключаться к следующему доступному серверу с минимальным пингом при неожиданном разрыве связи."), QStringLiteral("Automatically reconnect to the best available backup server if the tunnel unexpectedly drops.")},
         {QStringLiteral("Запускать при старте системы"), QStringLiteral("Launch on system startup")},
-        {QStringLiteral("Автоматически запускать Beaxty VPN при входе в операционную систему."), QStringLiteral("Automatically start Beaxty VPN when you log in to your computer.")},
+        {QStringLiteral("Автоматически запускать beaxty VPN при входе в операционную систему."), QStringLiteral("Automatically start beaxty VPN when you log in to your computer.")},
         {QStringLiteral("Автообновление подписок"), QStringLiteral("Subscription Auto-Update")},
         {QStringLiteral("Режим периодического обновления списков серверов и данных профиля:"), QStringLiteral("Subscription server lists and profile update policy:")},
         {QStringLiteral("Никогда"), QStringLiteral("Never")},
@@ -327,7 +327,8 @@ static void ensureDictionariesInitialized() {
         {QStringLiteral("Сменить сервер"), QStringLiteral("Change server")},
         {QStringLiteral("Нет доступных серверов"), QStringLiteral("No servers available")},
         {QStringLiteral("Не выбран"), QStringLiteral("Not selected")},
-        {QStringLiteral("Открыть окно Beaxty VPN"), QStringLiteral("Open Beaxty VPN")},
+        {QStringLiteral("Открыть окно beaxty VPN"), QStringLiteral("Open beaxty VPN")},
+        {QStringLiteral("Выход из beaxty VPN"), QStringLiteral("Quit beaxty VPN")},
         {QStringLiteral("Выход"), QStringLiteral("Quit")},
         {QStringLiteral("Связь потеряна. Переключение на «%1»..."), QStringLiteral("Connection lost. Switching to «%1»...")},
         {QStringLiteral("Не удалось восстановить подключение (все серверы недоступны)"), QStringLiteral("Failed to restore connection (all servers unreachable)")}
@@ -449,8 +450,10 @@ static void ensureDictionariesInitialized() {
         {QStringLiteral("Change server"), QStringLiteral("Сменить сервер")},
         {QStringLiteral("No servers available"), QStringLiteral("Нет доступных серверов")},
         {QStringLiteral("Not selected"), QStringLiteral("Не выбран")},
-        {QStringLiteral("Open Beaxty VPN"), QStringLiteral("Открыть окно Beaxty VPN")},
-        {QStringLiteral("Quit Beaxty VPN"), QStringLiteral("Выход")}
+        {QStringLiteral("Open beaxty VPN"), QStringLiteral("Открыть окно beaxty VPN")},
+        {QStringLiteral("Quit beaxty VPN"), QStringLiteral("Выход из beaxty VPN")},
+        {QStringLiteral("Open Beaxty VPN"), QStringLiteral("Открыть окно beaxty VPN")},
+        {QStringLiteral("Quit Beaxty VPN"), QStringLiteral("Выход из beaxty VPN")}
     };
 
     for (auto it = extraEnToRu.constBegin(); it != extraEnToRu.constEnd(); ++it) {

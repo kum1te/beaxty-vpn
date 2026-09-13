@@ -35,7 +35,7 @@ bool AutostartManager::autostartEnabled() const
     return QFile::exists(desktopFilePath());
 #elif defined(Q_OS_WIN)
     QSettings settings(QStringLiteral("HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Run"), QSettings::NativeFormat);
-    return settings.contains(QStringLiteral("BeaxtyVPN"));
+    return settings.contains(QStringLiteral("beaxtyVPN")) || settings.contains(QStringLiteral("BeaxtyVPN"));
 #else
     return false;
 #endif
@@ -73,8 +73,8 @@ void AutostartManager::setAutostartEnabled(bool enabled)
         QTextStream out(&file);
         out << QStringLiteral("[Desktop Entry]\n")
             << QStringLiteral("Type=Application\n")
-            << QStringLiteral("Name=Beaxty VPN\n")
-            << QStringLiteral("Comment=Beaxty VPN Client\n")
+            << QStringLiteral("Name=beaxty VPN\n")
+            << QStringLiteral("Comment=beaxty VPN Client\n")
             << QStringLiteral("Exec=\"%1\" -tray\n").arg(execPath)
             << QStringLiteral("Icon=beaxty-vpn\n")
             << QStringLiteral("Terminal=false\n")
@@ -94,8 +94,9 @@ void AutostartManager::setAutostartEnabled(bool enabled)
     QSettings settings(QStringLiteral("HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Run"), QSettings::NativeFormat);
     if (enabled) {
         QString appPath = QDir::toNativeSeparators(QCoreApplication::applicationFilePath());
-        settings.setValue(QStringLiteral("BeaxtyVPN"), QStringLiteral("\"%1\" -tray").arg(appPath));
+        settings.setValue(QStringLiteral("beaxtyVPN"), QStringLiteral("\"%1\" -tray").arg(appPath));
     } else {
+        settings.remove(QStringLiteral("beaxtyVPN"));
         settings.remove(QStringLiteral("BeaxtyVPN"));
     }
 #endif

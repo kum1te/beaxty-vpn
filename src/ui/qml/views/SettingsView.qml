@@ -484,7 +484,7 @@ Item {
 
                 ToggleRow {
                     title: qsTr("Запускать при старте системы")
-                    description: qsTr("Автоматически запускать Beaxty VPN при входе в операционную систему.")
+                    description: qsTr("Автоматически запускать beaxty VPN при входе в операционную систему.")
                     checked: typeof autostartManager !== "undefined" && autostartManager.autostartEnabled
                     onToggled: function(value) {
                         if (typeof autostartManager !== "undefined") autostartManager.autostartEnabled = value
@@ -687,7 +687,7 @@ Item {
                             spacing: 3
 
                             Text {
-                                text: "BeaxtyVPN v1.0.0"
+                                text: "beaxty VPN v1.0.2"
                                 color: Theme.textPrimary
                                 font.pixelSize: 14
                                 font.bold: true

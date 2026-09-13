@@ -276,7 +276,7 @@ void ThroneEngine::exportSupportReport() {
 
     // 1. System & App info
     out << "[1. SYSTEM & APPLICATION INFORMATION]\n";
-    out << "App Version: BeaxtyVPN v1.0.0 (GPL-3.0)\n";
+    out << "App Version: beaxty VPN v1.0.2 (GPL-3.0)\n";
     out << "Qt Version: " << QT_VERSION_STR << "\n";
     out << "OS Pretty Name: " << QSysInfo::prettyProductName() << "\n";
     out << "Kernel Type/Version: " << QSysInfo::kernelType() << " " << QSysInfo::kernelVersion() << "\n";
