@@ -1,5 +1,8 @@
 #pragma code_page(65001)
 
+IDI_ICON1 ICON "icons/app_icon.ico"
+
+#if defined(__MINGW32__) || defined(__MINGW64__)
 #ifndef CREATEPROCESS_MANIFEST_RESOURCE_ID
 #define CREATEPROCESS_MANIFEST_RESOURCE_ID 1
 #endif
@@ -8,3 +11,4 @@
 #endif
 
 CREATEPROCESS_MANIFEST_RESOURCE_ID RT_MANIFEST "beaxty-vpn.manifest"
+#endif
