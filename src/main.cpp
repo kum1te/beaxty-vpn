@@ -112,6 +112,41 @@ static bool relaunchAsAdmin(int argc, char *argv[]) {
 #include <malloc.h>
 #endif
 
+#if !defined(_WIN32)
+#include <sys/socket.h>
+#include <signal.h>
+#include <unistd.h>
+#include <QSocketNotifier>
+
+static int sigFd[2];
+
+static void signalHandler(int sig) {
+    Q_UNUSED(sig);
+    char a = 1;
+    ::write(sigFd[0], &a, sizeof(a));
+}
+
+static void setupUnixSignalHandlers(QObject *parent) {
+    if (::socketpair(AF_UNIX, SOCK_STREAM, 0, sigFd) != 0) {
+        return;
+    }
+    auto *sn = new QSocketNotifier(sigFd[1], QSocketNotifier::Read, parent);
+    QObject::connect(sn, &QSocketNotifier::activated, [sn]() {
+        sn->setEnabled(false);
+        char a;
+        ::read(sigFd[1], &a, sizeof(a));
+        QCoreApplication::quit();
+    });
+
+    struct sigaction sa;
+    sa.sa_handler = signalHandler;
+    sigemptyset(&sa.sa_mask);
+    sa.sa_flags = SA_RESTART;
+    sigaction(SIGINT, &sa, nullptr);
+    sigaction(SIGTERM, &sa, nullptr);
+}
+#endif
+
 int main(int argc, char *argv[]) {
 #if defined(_WIN32)
     if (!isRunningAsAdmin()) {
@@ -121,6 +156,9 @@ int main(int argc, char *argv[]) {
 #endif
     qputenv("QT_QUICK_CONTROLS_STYLE", "Basic");
     QApplication app(argc, argv);
+#if !defined(_WIN32)
+    setupUnixSignalHandlers(&app);
+#endif
     app.setApplicationName(QStringLiteral("beaxty VPN"));
     app.setOrganizationName(QStringLiteral("Beaxty"));
     app.setApplicationVersion(QStringLiteral("1.0.2"));

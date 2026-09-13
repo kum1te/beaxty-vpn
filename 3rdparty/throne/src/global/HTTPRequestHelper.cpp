@@ -9,14 +9,45 @@
 #include <QApplication>
 #include <QMap>
 #include <QStringList>
-
-
+#include <QHostAddress>
 
 #include "include/global/Configs.hpp"
 #include "include/ui/mainwindow.h"
 #include "include/global/DeviceDetailsHelper.hpp"
 
 namespace Configs_network {
+
+    bool NetworkRequestHelper::IsSafePublicUrl(const QUrl &url) {
+        if (!url.isValid()) return false;
+        QString scheme = url.scheme().toLower();
+        if (scheme != QStringLiteral("http") && scheme != QStringLiteral("https")) return false;
+
+        QString host = url.host().trimmed().toLower();
+        if (host.isEmpty()) return false;
+        if (host == QStringLiteral("metadata.google.internal")) return false;
+
+        // In test environments (e.g. QPA offscreen or test runner), allow loopback mock test servers
+        bool isTestEnv = qEnvironmentVariableIsSet("BEAXTY_ALLOW_LOCAL_TEST_REQUESTS") ||
+                         (qgetenv("QT_QPA_PLATFORM") == "offscreen");
+
+        if (host == QStringLiteral("localhost")) {
+            if (!isTestEnv) return false;
+        }
+
+        QHostAddress addr(host);
+        if (!addr.isNull()) {
+            if (addr.isLoopback()) {
+                if (!isTestEnv) return false;
+            } else if (addr.isLinkLocal() || addr.isMulticast() || addr.isBroadcast()) {
+                return false;
+            }
+            QString ip = addr.toString();
+            if (ip == QStringLiteral("169.254.169.254") || ip == QStringLiteral("100.100.100.200") || ip == QStringLiteral("0.0.0.0")) {
+                return false;
+            }
+        }
+        return true;
+    }
 
     HTTPResponse NetworkRequestHelper::HttpGet(const QString &url, bool sendHwid, bool useProxy, qint64 maxBytes) {
         QEventLoop loop;
@@ -35,13 +66,25 @@ namespace Configs_network {
                                             bool useProxy, qint64 maxBytes,
                                             std::function<void(HTTPResponse)> done) {
         if (!Configs::dataManager || !Configs::dataManager->settingsRepo) {
-            done(HTTPResponse{QObject::tr("Database is not ready.")});
+            QTimer::singleShot(0, context, [done = std::move(done)]() {
+                done(HTTPResponse{QObject::tr("Database is not ready.")});
+            });
             return;
         }
+
+        QUrl parsedUrl(url);
+        if (!IsSafePublicUrl(parsedUrl)) {
+            QString blockedMsg = QObject::tr("Blocked request to prohibited host/IP: %1").arg(url);
+            QTimer::singleShot(0, context, [done = std::move(done), blockedMsg]() {
+                done(HTTPResponse{blockedMsg});
+            });
+            return;
+        }
+
         QNetworkRequest request;
         auto accessManager = new QNetworkAccessManager(context);
         accessManager->setTransferTimeout(10000);
-        request.setUrl(url);
+        request.setUrl(parsedUrl);
         if (Configs::dataManager->settingsRepo->net_use_proxy || Configs::dataManager->settingsRepo->spmode_system_proxy || useProxy) {
             if (Configs::dataManager->settingsRepo->started_id < 0) {
                 accessManager->deleteLater();
@@ -101,6 +144,12 @@ namespace Configs_network {
             if (!model.isEmpty()) request.setRawHeader("x-device-model", model.toUtf8());
         }
         auto reply = accessManager->get(request);
+        connect(reply, &QNetworkReply::redirected, reply, [reply](const QUrl &redirectUrl) {
+            if (!IsSafePublicUrl(redirectUrl)) {
+                qWarning() << "[HTTPRequestHelper] Blocked SSRF redirect to:" << redirectUrl;
+                reply->abort();
+            }
+        });
         auto body = std::make_shared<QByteArray>();
         auto tooLarge = std::make_shared<bool>(false);
         // Bound both memory consumption and total request duration, including slow streams.
@@ -142,9 +191,14 @@ namespace Configs_network {
     }
 
     QString NetworkRequestHelper::DownloadAsset(const QString &url, const QString &fileName, bool useProxy) {
+        QUrl parsedUrl(url);
+        if (!IsSafePublicUrl(parsedUrl)) {
+            return QObject::tr("Blocked download from prohibited host/IP: %1").arg(url);
+        }
+
         QNetworkRequest request;
         QNetworkAccessManager accessManager;
-        request.setUrl(url);
+        request.setUrl(parsedUrl);
         if (Configs::dataManager->settingsRepo->net_use_proxy || Configs::dataManager->settingsRepo->spmode_system_proxy || useProxy) {
             if (Configs::dataManager->settingsRepo->started_id < 0) {
                 return QObject::tr("Request with proxy but no profile started.");
@@ -167,6 +221,12 @@ namespace Configs_network {
         }
 
         auto _reply = accessManager.get(request);
+        connect(_reply, &QNetworkReply::redirected, _reply, [_reply](const QUrl &redirectUrl) {
+            if (!IsSafePublicUrl(redirectUrl)) {
+                qWarning() << "[HTTPRequestHelper] Blocked SSRF redirect in DownloadAsset to:" << redirectUrl;
+                _reply->abort();
+            }
+        });
         connect(_reply, &QNetworkReply::sslErrors, _reply, [](const QList<QSslError> &errors) {
             QStringList error_str;
             for (const auto &err: errors) {

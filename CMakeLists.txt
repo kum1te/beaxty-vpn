@@ -350,6 +350,7 @@ foreach(_beaxty_test
     test_full_tunnel_wiring
     test_per_app_routing
     test_ping_diag
+    test_security_audit
 )
     add_executable(${_beaxty_test} tests/${_beaxty_test}.cpp ${BEAXTY_RESOURCES})
     target_link_libraries(${_beaxty_test} PRIVATE beaxty_core)
@@ -371,7 +372,7 @@ target_link_libraries(test_capture_ui PRIVATE
 # Deterministic, local checks available through one standard command.
 enable_testing()
 foreach(_test test_hwid test_config_builder test_subscription_import test_subscription_safety
-              test_routing_presets test_full_tunnel_wiring test_per_app_routing)
+              test_routing_presets test_full_tunnel_wiring test_per_app_routing test_security_audit)
     add_test(NAME ${_test} COMMAND ${_test})
     set_tests_properties(${_test} PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 60)
     # Existing tests use assert(); keep their checks active in Release builds.

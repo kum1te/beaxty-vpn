@@ -31,6 +31,13 @@
 namespace Configs {
     void initDB(const std::string& dbPath) {
         dataManager = new DatabaseManager(dbPath);
+#ifndef _WIN32
+        ::chmod(dbPath.c_str(), S_IRUSR | S_IWUSR);
+        std::string walPath = dbPath + "-wal";
+        if (access(walPath.c_str(), F_OK) == 0) ::chmod(walPath.c_str(), S_IRUSR | S_IWUSR);
+        std::string shmPath = dbPath + "-shm";
+        if (access(shmPath.c_str(), F_OK) == 0) ::chmod(shmPath.c_str(), S_IRUSR | S_IWUSR);
+#endif
 
         if (dataManager->groupsRepo->GetAllGroupIds().empty()) {
             auto defaultGroup = GroupsRepo::NewGroup();

@@ -1915,8 +1915,10 @@ namespace Configs {
                 QJsonObject sniff;
                 QJsonObject resolve;
                 QJsonObject dnsHijack;
+                QJsonObject dnsPortHijack;
                 QJsonObject dnsInReject;
                 QJsonObject redirectSniff;
+                QJsonObject ipv6Block;
             } injected;
 
             if (!routeChain->isRaw) {
@@ -1932,6 +1934,16 @@ namespace Configs {
                     {"protocol", "dns"},
                     {"action", "hijack-dns"},
                 };
+                injected.dnsPortHijack = QJsonObject{
+                    {"port", QJsonArray{53}},
+                    {"action", "hijack-dns"},
+                };
+                if (!settings.vpn_ipv6) {
+                    injected.ipv6Block = QJsonObject{
+                        {"ip_cidr", QJsonArray{"::/0"}},
+                        {"action", "reject"},
+                    };
+                }
                 if (settings.enable_redirect && !ctx.forTest) {
                     injected.redirectSniff = QJsonObject{
                         {"inbound", QJsonArray{tags::redirectIn}},
@@ -2032,9 +2044,11 @@ namespace Configs {
             auto appendIfSet = [&routeRules](const QJsonObject& r) { if (!r.isEmpty()) routeRules.append(r); };
             appendIfSet(injected.sniff);
             appendIfSet(injected.resolve);
+            appendIfSet(injected.dnsPortHijack);
             appendIfSet(injected.dnsHijack);
             appendIfSet(injected.dnsInReject);
             appendIfSet(injected.redirectSniff);
+            appendIfSet(injected.ipv6Block);
             for (const auto& r : profileRules) routeRules.append(r);
             for (const auto& r : vpnAuxRules) routeRules.append(r);
             for (const auto& r : l3BridgeFinalRules) routeRules.append(r);

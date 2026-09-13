@@ -26,6 +26,8 @@ namespace Configs_network {
         ;
 
     public:
+        static bool IsSafePublicUrl(const QUrl &url);
+
         // maxBytes > 0 aborts the transfer once the body exceeds it and reports an error.
         static HTTPResponse HttpGet(const QString &url, bool sendHwid = false, bool useProxy = false, qint64 maxBytes = 0);
 

@@ -389,6 +389,11 @@ void ConfigAdapter::deleteServer(int profileId) {
         if (settings && settings->started_id == profileId) {
             if (ThroneEngine::instance()) ThroneEngine::instance()->stopConnection();
             settings->started_id = -1;
+            settings->Save();
+        }
+        if (m_selectedServerId == profileId) {
+            m_selectedServerId = -1;
+            emit selectedServerIdChanged(m_selectedServerId);
         }
         Configs::dataManager->profilesRepo->BatchDeleteProfiles(ids);
         reloadServers();
@@ -822,6 +827,10 @@ void ConfigAdapter::deleteGroup(int groupId) {
                 Configs::dataManager->settingsRepo->started_id = -1;
                 Configs::dataManager->settingsRepo->Save();
             }
+            if (idsToDelete.contains(m_selectedServerId)) {
+                m_selectedServerId = -1;
+                emit selectedServerIdChanged(m_selectedServerId);
+            }
             Configs::dataManager->profilesRepo->BatchDeleteProfiles(idsToDelete);
         }
     }
@@ -941,12 +950,20 @@ void ConfigAdapter::finishImport(const QString &trimmed, const QString &groupNam
                     } else if (fn.indexOf(';') > 0) {
                         fn = fn.left(fn.indexOf(';')).trimmed();
                     }
+                    fn = QFileInfo(fn).fileName();
+                    fn.remove(QRegularExpression(QStringLiteral("[\\\\/\\r\\n\\t\\0]")));
+                    while (fn.startsWith('.')) fn.remove(0, 1);
+                    if (fn.length() > 80) fn = fn.left(80);
+                    fn = fn.trimmed();
                 }
 
                 if (!profileTitle.trimmed().isEmpty()) {
-                    finalGroupName = profileTitle.trimmed();
-                } else if (!fn.trimmed().isEmpty()) {
-                    finalGroupName = fn.trimmed();
+                    QString pt = profileTitle.trimmed();
+                    pt.remove(QRegularExpression(QStringLiteral("[\\r\\n\\t\\0]")));
+                    if (pt.length() > 80) pt = pt.left(80);
+                    finalGroupName = pt.trimmed();
+                } else if (!fn.isEmpty()) {
+                    finalGroupName = fn;
                 } else {
                     finalGroupName = QStringLiteral("Подписка beaxty");
                 }

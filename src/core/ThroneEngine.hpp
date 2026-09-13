@@ -138,4 +138,5 @@ private:
     // crash apart from an orderly shutdown and only then trip the kill switch.
     bool m_intentionalStop = false;
     bool m_userWantsConnect = false;
+    std::atomic<uint64_t> m_connectSeq{0};
 };

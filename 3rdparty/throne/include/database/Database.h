@@ -10,6 +10,10 @@
 
 #include "include/global/Utils.hpp"
 
+#ifndef _WIN32
+#include <sys/stat.h>
+#endif
+
 namespace Configs {
     struct ProfileInsertRow {
         int id;
@@ -90,6 +94,9 @@ namespace Configs {
     public:
         explicit Database(const std::string& path, bool incrementalVacuum = false)
             : db(path, SQLite::OPEN_READWRITE | SQLite::OPEN_CREATE, BUSY_TIMEOUT_MS), path_(path) {
+#ifndef _WIN32
+            ::chmod(path.c_str(), S_IRUSR | S_IWUSR);
+#endif
             // Must precede journal_mode: WAL writes the header, after which auto_vacuum no longer takes.
             if (incrementalVacuum) db.exec("PRAGMA auto_vacuum = INCREMENTAL");
             db.exec("PRAGMA foreign_keys = ON");

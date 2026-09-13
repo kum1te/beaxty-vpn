@@ -10,18 +10,39 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
 if [[ -n "${1:-}" ]]; then
-    BIN_PATH="$1"
+    INPUT_PATH="$1"
 else
-    BIN_PATH="${ROOT_DIR}/bin/beaxty-core"
-    if [[ ! -f "${BIN_PATH}" && -f "${ROOT_DIR}/build/bin/beaxty-core" ]]; then
-        BIN_PATH="${ROOT_DIR}/build/bin/beaxty-core"
+    INPUT_PATH="${ROOT_DIR}/bin/beaxty-core"
+    if [[ ! -f "${INPUT_PATH}" && -f "${ROOT_DIR}/build/bin/beaxty-core" ]]; then
+        INPUT_PATH="${ROOT_DIR}/build/bin/beaxty-core"
     fi
 fi
 
-if [[ ! -f "${BIN_PATH}" ]]; then
-    echo "Error: ${BIN_PATH} does not exist. Run scripts/build_core.sh first." >&2
+if ! command -v realpath >/dev/null 2>&1; then
+    echo "Error: realpath utility is required." >&2
     exit 1
 fi
+
+BIN_PATH="$(realpath -e "${INPUT_PATH}" 2>/dev/null || true)"
+
+if [[ -z "${BIN_PATH}" || ! -f "${BIN_PATH}" ]]; then
+    echo "Error: '${INPUT_PATH}' does not exist or is not a regular file." >&2
+    exit 1
+fi
+
+BIN_NAME="$(basename "${BIN_PATH}")"
+if [[ "${BIN_NAME}" != "beaxty-core" ]]; then
+    echo "Error: Invalid target binary '${BIN_NAME}'. Expected 'beaxty-core'." >&2
+    exit 1
+fi
+
+# Prohibit elevation of binaries located in critical system or temporary paths
+for restricted_dir in "/etc" "/bin" "/usr/bin" "/sbin" "/usr/sbin" "/tmp" "/var/tmp" "/dev"; do
+    if [[ "${BIN_PATH}" == "${restricted_dir}"* ]]; then
+        echo "Error: Binary path '${BIN_PATH}' is inside restricted directory '${restricted_dir}'." >&2
+        exit 1
+    fi
+done
 
 echo "Setting permissions and capabilities on ${BIN_PATH}..."
 

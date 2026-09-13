@@ -34,6 +34,24 @@
 #include <QProcess>
 #include <QRegularExpression>
 
+#if defined(Q_OS_LINUX)
+#include <unistd.h>
+#include <sys/prctl.h>
+#include <signal.h>
+#endif
+
+#if defined(Q_OS_WIN)
+#include <QSettings>
+static void setWindowsDnsSmartNameResolution(bool disable) {
+    QSettings reg(QStringLiteral("HKEY_LOCAL_MACHINE\\SOFTWARE\\Policies\\Microsoft\\Windows NT\\DNSClient"), QSettings::NativeFormat);
+    if (disable) {
+        reg.setValue(QStringLiteral("DisableSmartNameResolution"), 1);
+    } else {
+        reg.remove(QStringLiteral("DisableSmartNameResolution"));
+    }
+}
+#endif
+
 ThroneEngine *ThroneEngine::s_instance = nullptr;
 
 ThroneEngine::ThroneEngine(QObject *parent) : QObject(parent) {
@@ -352,11 +370,20 @@ void ThroneEngine::exportSupportReport() {
         }
     }
     for (QString line : lines) {
-        // Redact passwords, private keys, authorization secrets
-        line.replace(QRegularExpression(QStringLiteral("password=[^;&\\s]+")), QStringLiteral("password=***REDACTED***"));
-        line.replace(QRegularExpression(QStringLiteral("secret=[^;&\\s]+")), QStringLiteral("secret=***REDACTED***"));
-        line.replace(QRegularExpression(QStringLiteral("key=[^;&\\s]+")), QStringLiteral("key=***REDACTED***"));
-        line.replace(QRegularExpression(QStringLiteral("uuid=[^;&\\s]+")), QStringLiteral("uuid=***REDACTED***"));
+        // Redact passwords, private keys, seeds, public keys, tokens, UUIDs, authorization secrets
+        line.replace(QRegularExpression(QStringLiteral("password=[^;&\\s]+"), QRegularExpression::CaseInsensitiveOption), QStringLiteral("password=***REDACTED***"));
+        line.replace(QRegularExpression(QStringLiteral("secret=[^;&\\s]+"), QRegularExpression::CaseInsensitiveOption), QStringLiteral("secret=***REDACTED***"));
+        line.replace(QRegularExpression(QStringLiteral("private_key=[^;&\\s]+"), QRegularExpression::CaseInsensitiveOption), QStringLiteral("private_key=***REDACTED***"));
+        line.replace(QRegularExpression(QStringLiteral("key=[^;&\\s]+"), QRegularExpression::CaseInsensitiveOption), QStringLiteral("key=***REDACTED***"));
+        line.replace(QRegularExpression(QStringLiteral("seed=[^;&\\s]+"), QRegularExpression::CaseInsensitiveOption), QStringLiteral("seed=***REDACTED***"));
+        line.replace(QRegularExpression(QStringLiteral("pbk=[^;&\\s]+"), QRegularExpression::CaseInsensitiveOption), QStringLiteral("pbk=***REDACTED***"));
+        line.replace(QRegularExpression(QStringLiteral("sid=[^;&\\s]+"), QRegularExpression::CaseInsensitiveOption), QStringLiteral("sid=***REDACTED***"));
+        line.replace(QRegularExpression(QStringLiteral("token=[^;&\\s]+"), QRegularExpression::CaseInsensitiveOption), QStringLiteral("token=***REDACTED***"));
+        line.replace(QRegularExpression(QStringLiteral("auth=[^;&\\s]+"), QRegularExpression::CaseInsensitiveOption), QStringLiteral("auth=***REDACTED***"));
+        line.replace(QRegularExpression(QStringLiteral("uuid=[^;&\\s]+"), QRegularExpression::CaseInsensitiveOption), QStringLiteral("uuid=***REDACTED***"));
+        line.replace(QRegularExpression(QStringLiteral("Bearer\\s+[A-Za-z0-9\\-_.]+"), QRegularExpression::CaseInsensitiveOption), QStringLiteral("Bearer ***REDACTED***"));
+        line.replace(QRegularExpression(QStringLiteral("(vless|vmess|trojan|ss|ssr)://[^@\\s]+@")), QStringLiteral("\\1://***REDACTED***@"));
+        line.replace(QRegularExpression(QStringLiteral("\\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\\b")), QStringLiteral("***REDACTED-UUID***"));
         out << line << "\n";
     }
     if (lines.isEmpty()) {
@@ -457,7 +484,7 @@ bool ThroneEngine::initialize(const QString &dbPath, const QString &coreBinaryPa
 #endif
         QString candidate1 = appDir + binName;
         QString candidate2 = appDir + QStringLiteral("/../bin") + binName;
-        QString candidate3 = QDir::currentPath() + QStringLiteral("/bin") + binName;
+        QString candidate3 = QStringLiteral("/usr/lib/beaxty-vpn") + binName;
 
 #ifdef Q_OS_MAC
         QString candidateMac = appDir + QStringLiteral("/../Resources/beaxty-core");
@@ -535,6 +562,11 @@ bool ThroneEngine::spawnCoreDaemon() {
     });
 
     m_coreProcess = new QProcess(this);
+#if defined(Q_OS_LINUX)
+    m_coreProcess->setChildProcessModifier([]() {
+        ::prctl(PR_SET_PDEATHSIG, SIGTERM);
+    });
+#endif
     auto env = QProcessEnvironment::systemEnvironment();
     env.insert(QStringLiteral("THRONE_CORE_SOCKET"), fullSocketName);
     env.insert(QStringLiteral("GOTRACEBACK"), QStringLiteral("crash"));
@@ -585,6 +617,7 @@ void ThroneEngine::startConnection() {
 
 void ThroneEngine::doStartConnection() {
     m_intentionalStop = false;
+    uint64_t seq = ++m_connectSeq;
     if (m_failoverAttempts == 0) {
         m_failedServerIds.clear();
     }
@@ -612,7 +645,11 @@ void ThroneEngine::doStartConnection() {
     }
 
     // Run config building and RPC Start asynchronously in background thread
-    QThreadPool::globalInstance()->start([this, profileId]() {
+    QThreadPool::globalInstance()->start([this, profileId, seq]() {
+        if (m_connectSeq != seq || !m_userWantsConnect || m_intentionalStop) {
+            return;
+        }
+
         if (!Configs::dataManager || !Configs::dataManager->profilesRepo) {
             QMetaObject::invokeMethod(this, [this]() {
                 setState(Disconnected);
@@ -638,6 +675,10 @@ void ThroneEngine::doStartConnection() {
 
         // Build sing-box configuration using Throne's Configs::BuildSingBoxConfig
         auto result = Configs::BuildSingBoxConfig(profile);
+        if (m_connectSeq != seq || !m_userWantsConnect || m_intentionalStop) {
+            return;
+        }
+
         if (!result->error.isEmpty()) {
             qWarning() << "[ThroneEngine] BuildConfig error:" << result->error;
             QMetaObject::invokeMethod(this, [this, err = result->error]() {
@@ -674,6 +715,10 @@ void ThroneEngine::doStartConnection() {
             req.extra_no_out = result->extraCoreData->noLog;
         }
 
+        if (m_connectSeq != seq || !m_userWantsConnect || m_intentionalStop) {
+            return;
+        }
+
         bool rpcOK = false;
         QString rpcErr;
         if (API::defaultClient && m_rpcSocket && m_rpcSocket->isOpen()) {
@@ -683,11 +728,19 @@ void ThroneEngine::doStartConnection() {
             rpcErr = QStringLiteral("Core daemon RPC is not connected. Check if beaxty-core is running.");
         }
 
+        if (m_connectSeq != seq || !m_userWantsConnect || m_intentionalStop) {
+            if (rpcOK && API::defaultClient && m_rpcSocket && m_rpcSocket->isOpen()) {
+                bool stopped = false;
+                API::defaultClient->Stop(&stopped);
+            }
+            return;
+        }
+
         auto chainGroups = result->chainGroups;
 
         // Post completion to main GUI thread
-        QMetaObject::invokeMethod(this, [this, rpcOK, rpcErr, profileName, chainGroups]() {
-            if (m_state != Connecting || !m_userWantsConnect) {
+        QMetaObject::invokeMethod(this, [this, seq, rpcOK, rpcErr, profileName, chainGroups]() {
+            if (m_connectSeq != seq || m_state != Connecting || !m_userWantsConnect) {
                 // Connection was stopped/cancelled while start was in-flight
                 if (rpcOK && rpcErr.isEmpty() && API::defaultClient && m_rpcSocket && m_rpcSocket->isOpen()) {
                     bool stopped = false;
@@ -732,6 +785,9 @@ void ThroneEngine::doStartConnection() {
             }
 
             setState(Protected);
+#if defined(Q_OS_WIN)
+            setWindowsDnsSmartNameResolution(true);
+#endif
             m_failoverAttempts = 0;
             m_failedServerIds.clear();
             if (ToastManager::instance()) {
@@ -764,6 +820,7 @@ void ThroneEngine::stopTrafficLooper() {
 void ThroneEngine::stopConnection() {
     if (m_state == Disconnected) return;
 
+    ++m_connectSeq;
     m_intentionalStop = true;
     m_userWantsConnect = false;
     m_failoverAttempts = 0;
@@ -771,6 +828,9 @@ void ThroneEngine::stopConnection() {
     stopTrafficLooper();
 
     setState(Disconnected);
+#if defined(Q_OS_WIN)
+    setWindowsDnsSmartNameResolution(false);
+#endif
     if (TrafficMonitor::instance()) {
         TrafficMonitor::instance()->resetSessionStats();
     }
@@ -795,6 +855,7 @@ void ThroneEngine::stopConnection() {
 void ThroneEngine::restartConnection() {
     if (m_state == Disconnected) return;
 
+    ++m_connectSeq;
     m_intentionalStop = true;
     m_userWantsConnect = true;
     setState(Connecting);
@@ -847,40 +908,86 @@ void ThroneEngine::applyKillSwitch(bool engaged) {
     if (m_killSwitchEngaged == engaged) return;
     m_killSwitchEngaged = engaged;
 
-    // Kill switch here means "do not silently fall back to the unprotected route":
-    // the tunnel is gone, so we surface it loudly rather than pretending all is well.
-    // Enforcing it at the firewall needs root and is deliberately not attempted from
-    // an unprivileged GUI process.
     if (engaged) {
-        m_statusMessage = QStringLiteral("Kill switch: tunnel lost, traffic is unprotected");
+        m_statusMessage = QStringLiteral("Kill switch: tunnel lost, traffic is blocked");
         emit statusMessageChanged(m_statusMessage);
         if (ToastManager::instance()) {
             ToastManager::instance()->showError(
-                QStringLiteral("Соединение с туннелем потеряно. Kill switch: трафик не защищён."));
+                QStringLiteral("Соединение с туннелем потеряно. Kill switch: весь трафик заблокирован."));
         }
         emit killSwitchTripped();
+
+        // 1. If core daemon is running and RPC is connected, send a blackhole config
+        if (API::defaultClient && m_rpcSocket && m_rpcSocket->isOpen()) {
+            QJsonObject blackholeConfig{
+                {"inbounds", QJsonArray{
+                    QJsonObject{
+                        {"type", "tun"},
+                        {"tag", "tun-in"},
+                        {"interface_name", "beaxty-tun"},
+                        {"auto_route", true},
+                        {"strict_route", true},
+                        {"address", QJsonArray{"172.19.0.1/30"}}
+                    }
+                }},
+                {"outbounds", QJsonArray{
+                    QJsonObject{
+                        {"type", "block"},
+                        {"tag", "block"}
+                    }
+                }},
+                {"route", QJsonObject{
+                    {"rules", QJsonArray{
+                        QJsonObject{{"action", "reject"}}
+                    }},
+                    {"final", "block"}
+                }}
+            };
+            libcore::LoadConfigReq req;
+            req.core_config = QJsonObject2QString(blackholeConfig, true).toStdString();
+            req.tun_ipv4_cidr = "172.19.0.1/30";
+            bool ok = false;
+            API::defaultClient->Start(&ok, req);
+        }
+
+        // 2. On Linux, enforce kernel blackhole default route
+#if defined(Q_OS_LINUX)
+        QProcess::execute(QStringLiteral("ip"), {QStringLiteral("route"), QStringLiteral("add"), QStringLiteral("blackhole"), QStringLiteral("default"), QStringLiteral("metric"), QStringLiteral("1")});
+#endif
     } else {
         m_statusMessage = stateString() == QStringLiteral("PROTECTED")
                               ? QStringLiteral("Protected - Tunnel Active")
                               : QStringLiteral("Disconnected");
         emit statusMessageChanged(m_statusMessage);
+
+#if defined(Q_OS_LINUX)
+        QProcess::execute(QStringLiteral("ip"), {QStringLiteral("route"), QStringLiteral("del"), QStringLiteral("blackhole"), QStringLiteral("default"), QStringLiteral("metric"), QStringLiteral("1")});
+#endif
     }
 }
 
 void ThroneEngine::requestElevateCapabilities() {
+    QString appDir = QCoreApplication::applicationDirPath();
     QString corePath = m_coreBinaryPath;
     if (corePath.isEmpty() || !QFile::exists(corePath)) {
         corePath = Configs::FindCoreRealPath();
     }
     if (corePath.isEmpty() || !QFile::exists(corePath)) {
-        QString binName = QStringLiteral("bin/beaxty-core");
+        QString binName = QStringLiteral("/beaxty-core");
 #ifdef Q_OS_WIN
         binName += QStringLiteral(".exe");
 #endif
-        corePath = QDir::current().absoluteFilePath(binName);
+        QString c1 = appDir + binName;
+        QString c2 = appDir + QStringLiteral("/../bin") + binName;
+        QString c3 = QStringLiteral("/usr/lib/beaxty-vpn") + binName;
+        if (QFile::exists(c1)) corePath = c1;
+        else if (QFile::exists(c2)) corePath = c2;
+        else if (QFile::exists(c3)) corePath = c3;
     }
 
-    if (!QFile::exists(corePath)) {
+    QFileInfo coreInfo(corePath);
+    QString canonicalCore = coreInfo.canonicalFilePath();
+    if (canonicalCore.isEmpty() || !coreInfo.exists() || !coreInfo.isFile()) {
         qWarning() << "[ThroneEngine] Core binary not found for elevation:" << corePath;
         if (ToastManager::instance()) {
             ToastManager::instance()->showError(QStringLiteral("Core binary not found for elevation"));
@@ -888,9 +995,38 @@ void ThroneEngine::requestElevateCapabilities() {
         return;
     }
 
+    QString coreFileName = coreInfo.fileName();
+    if (coreFileName != QStringLiteral("beaxty-core") && coreFileName != QStringLiteral("beaxty-core.exe")) {
+        qWarning() << "[ThroneEngine] Untrusted core binary name for elevation:" << coreFileName;
+        return;
+    }
+
 #ifdef Q_OS_LINUX
-    qDebug() << "[ThroneEngine] Elevating permissions for core daemon (SUID root):" << corePath;
-    QString scriptPath = QDir::current().absoluteFilePath(QStringLiteral("scripts/setup-cap.sh"));
+    // Ownership check: must be owned by root or current user
+    if (coreInfo.ownerId() != 0 && coreInfo.ownerId() != ::getuid()) {
+        qWarning() << "[ThroneEngine] Core binary is not owned by root or current user:" << canonicalCore;
+        if (ToastManager::instance()) {
+            ToastManager::instance()->showError(QStringLiteral("Небезопасный владелец файла ядра."));
+        }
+        return;
+    }
+
+    qDebug() << "[ThroneEngine] Elevating permissions for core daemon (SUID root):" << canonicalCore;
+    QString scriptPath;
+    QStringList candidateScripts = {
+        appDir + QStringLiteral("/scripts/setup-cap.sh"),
+        appDir + QStringLiteral("/../scripts/setup-cap.sh"),
+        QStringLiteral("/usr/share/beaxty-vpn/scripts/setup-cap.sh")
+    };
+    for (const auto &cand : candidateScripts) {
+        QFileInfo sInfo(cand);
+        if (sInfo.exists() && sInfo.isFile()) {
+            if (sInfo.ownerId() == 0 || sInfo.ownerId() == ::getuid()) {
+                scriptPath = sInfo.canonicalFilePath();
+                break;
+            }
+        }
+    }
 
     QProcess *proc = new QProcess(this);
     connect(proc, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished), this,
@@ -929,18 +1065,18 @@ void ThroneEngine::requestElevateCapabilities() {
 
     QString pkexec = QStandardPaths::findExecutable(QStringLiteral("pkexec"));
     if (!pkexec.isEmpty()) {
-        if (QFile::exists(scriptPath)) {
-            proc->start(pkexec, {QStringLiteral("/bin/bash"), scriptPath, corePath});
+        if (!scriptPath.isEmpty() && QFile::exists(scriptPath)) {
+            proc->start(pkexec, {QStringLiteral("/bin/bash"), scriptPath, canonicalCore});
         } else {
-            QString cmd = QStringLiteral("chown root:root \"%1\" && chmod 4755 \"%1\"").arg(corePath);
+            QString cmd = QStringLiteral("chown root:root \"%1\" && chmod 4755 \"%1\"").arg(canonicalCore);
             proc->start(pkexec, {QStringLiteral("sh"), QStringLiteral("-c"), cmd});
         }
     } else {
-        if (QFile::exists(scriptPath)) {
-            proc->start(QStringLiteral("/bin/bash"), {scriptPath, corePath});
+        if (!scriptPath.isEmpty() && QFile::exists(scriptPath)) {
+            proc->start(QStringLiteral("/bin/bash"), {scriptPath, canonicalCore});
         } else {
             proc->start(QStringLiteral("sudo"), {QStringLiteral("sh"), QStringLiteral("-c"),
-                        QStringLiteral("chown root:root \"%1\" && chmod 4755 \"%1\"").arg(corePath)});
+                        QStringLiteral("chown root:root \"%1\" && chmod 4755 \"%1\"").arg(canonicalCore)});
         }
     }
 

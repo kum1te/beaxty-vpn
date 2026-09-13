@@ -14,6 +14,7 @@ Item {
     signal clicked()
 
     readonly property bool isProtected: connectionState === 2
+    property bool animationsEnabled: (Window.window ? (Window.window.visible && Window.window.visibility !== Window.Minimized) : true)
 
     width: 180
     height: 180
@@ -38,11 +39,9 @@ Item {
         anchors.centerIn: parent
         width: parent.width + 80
         height: parent.height + 80
-        opacity: root.isProtected ? 1.0 : (root.busy ? 0.3 : 0.0)
-        visible: opacity > 0.001
-        Behavior on opacity { NumberAnimation { duration: Theme.durationSlow } }
+        visible: root.isProtected
 
-        // Ring 1 (inner aura ring)
+        // Ring 1 (innermost aura ring)
         Rectangle {
             anchors.centerIn: parent
             width: root.width + 24
@@ -50,25 +49,11 @@ Item {
             radius: width / 2
             color: "transparent"
             border.color: Theme.accentWhite
-            border.width: 1.5
-            opacity: root.isProtected ? 0.30 : 0.0
-
-            SequentialAnimation on scale {
-                running: root.isProtected
-                loops: Animation.Infinite
-                NumberAnimation { from: 1.0; to: 1.04; duration: 2200; easing.type: Easing.InOutSine }
-                NumberAnimation { from: 1.04; to: 1.0; duration: 2200; easing.type: Easing.InOutSine }
-            }
-
-            SequentialAnimation on opacity {
-                running: root.isProtected
-                loops: Animation.Infinite
-                NumberAnimation { from: 0.30; to: 0.14; duration: 2200; easing.type: Easing.InOutSine }
-                NumberAnimation { from: 0.14; to: 0.30; duration: 2200; easing.type: Easing.InOutSine }
-            }
+            border.width: 1.0
+            opacity: root.isProtected ? 0.32 : 0.0
         }
 
-        // Ring 2 (mid aura ring)
+        // Ring 2 (middle aura ring)
         Rectangle {
             anchors.centerIn: parent
             width: root.width + 48
@@ -81,6 +66,7 @@ Item {
 
             SequentialAnimation on scale {
                 running: root.isProtected
+                paused: running && !root.animationsEnabled
                 loops: Animation.Infinite
                 NumberAnimation { from: 1.01; to: 1.06; duration: 2600; easing.type: Easing.InOutSine }
                 NumberAnimation { from: 1.06; to: 1.01; duration: 2600; easing.type: Easing.InOutSine }
@@ -88,6 +74,7 @@ Item {
 
             SequentialAnimation on opacity {
                 running: root.isProtected
+                paused: running && !root.animationsEnabled
                 loops: Animation.Infinite
                 NumberAnimation { from: 0.18; to: 0.06; duration: 2600; easing.type: Easing.InOutSine }
                 NumberAnimation { from: 0.06; to: 0.18; duration: 2600; easing.type: Easing.InOutSine }
@@ -107,6 +94,7 @@ Item {
 
             SequentialAnimation on scale {
                 running: root.isProtected
+                paused: running && !root.animationsEnabled
                 loops: Animation.Infinite
                 NumberAnimation { from: 1.0; to: 1.05; duration: 3000; easing.type: Easing.InOutSine }
                 NumberAnimation { from: 1.05; to: 1.0; duration: 3000; easing.type: Easing.InOutSine }
@@ -114,6 +102,7 @@ Item {
 
             SequentialAnimation on opacity {
                 running: root.isProtected
+                paused: running && !root.animationsEnabled
                 loops: Animation.Infinite
                 NumberAnimation { from: 0.08; to: 0.02; duration: 3000; easing.type: Easing.InOutSine }
                 NumberAnimation { from: 0.02; to: 0.08; duration: 3000; easing.type: Easing.InOutSine }
@@ -143,6 +132,7 @@ Item {
 
             SequentialAnimation {
                 running: root.connectionState === 1
+                paused: running && !root.animationsEnabled
                 loops: Animation.Infinite
                 PauseAnimation { duration: index * 600 }
                 ParallelAnimation {
@@ -169,6 +159,7 @@ Item {
 
         SequentialAnimation on scale {
             running: root.isProtected
+            paused: running && !root.animationsEnabled
             loops: Animation.Infinite
             NumberAnimation { from: 1.0; to: 1.06; duration: 1800; easing.type: Easing.InOutSine }
             NumberAnimation { from: 1.06; to: 1.0; duration: 1800; easing.type: Easing.InOutSine }
@@ -176,6 +167,7 @@ Item {
 
         SequentialAnimation on opacity {
             running: root.isProtected
+            paused: running && !root.animationsEnabled
             loops: Animation.Infinite
             NumberAnimation { from: 0.45; to: 0.18; duration: 1800; easing.type: Easing.InOutSine }
             NumberAnimation { from: 0.18; to: 0.45; duration: 1800; easing.type: Easing.InOutSine }
@@ -220,6 +212,7 @@ Item {
 
         NumberAnimation on rotation {
             running: root.connectionState === 1
+            paused: running && !root.animationsEnabled
             loops: Animation.Infinite
             from: 0
             to: 360
