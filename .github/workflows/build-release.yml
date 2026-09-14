@@ -105,6 +105,11 @@ jobs:
         run: |
           cd 3rdparty/throne/core/server
           mkdir -p ../../../../bin
+          export GOPROXY="https://proxy.golang.org,direct"
+          for i in 1 2 3 4 5; do
+            echo "Attempt $i: downloading Go modules..."
+            go mod download && break || sleep 5
+          done
           VERSION_SINGBOX=$(go list -m -f '{{.Version}}' github.com/sagernet/sing-box)
           TAGS="with_clash_api,with_gvisor,with_quic,with_wireguard,with_utls,with_dhcp,with_tailscale"
           CGO_ENABLED=0 go build -v \
@@ -186,6 +191,11 @@ jobs:
         run: |
           cd 3rdparty/throne/core/server
           mkdir -p ../../../../bin
+          export GOPROXY="https://proxy.golang.org,direct"
+          for i in 1 2 3 4 5; do
+            echo "Attempt $i: downloading Go modules..."
+            go mod download && break || sleep 5
+          done
           VERSION_SINGBOX=$(go list -m -f '{{.Version}}' github.com/sagernet/sing-box)
           TAGS="with_clash_api,with_gvisor,with_quic,with_wireguard,with_utls,with_dhcp,with_tailscale"
           CGO_ENABLED=1 go build -v \

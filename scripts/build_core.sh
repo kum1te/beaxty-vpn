@@ -24,6 +24,11 @@ protoc -I . --go_out=. --go-grpc_out=. libcore.proto
 
 echo "==> Building BeaxtyVPN core daemon..."
 cd "${CORE_SRC_DIR}"
+export GOPROXY="https://proxy.golang.org,direct"
+for i in 1 2 3 4 5; do
+    echo "Attempt $i: downloading Go modules..."
+    go mod download && break || sleep 5
+done
 TAGS="with_clash_api,with_gvisor,with_quic,with_wireguard,with_utls,with_dhcp,with_tailscale"
 VERSION_SINGBOX=$(go list -m -f '{{.Version}}' github.com/sagernet/sing-box)
 
