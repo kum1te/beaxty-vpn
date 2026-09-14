@@ -23,6 +23,10 @@ Window {
         importSheet.open();
     }
 
+    function openImportSheetWithUrl(url, groupName) {
+        importSheet.openWithUrl(url, groupName);
+    }
+
     function closeImportSheet() {
         importSheet.close();
     }
@@ -232,6 +236,7 @@ Window {
                             { label: qsTr("Подключение"),   icon: "qrc:/icons/vpn_shield.svg" },
                             { label: qsTr("Серверы"),       icon: "qrc:/icons/nodes_list.svg" },
                             { label: qsTr("Маршрутизация"), icon: "qrc:/icons/routing_fork.svg" },
+                            { label: qsTr("Кабинет"),       icon: "qrc:/icons/cabinet.svg" },
                             { label: qsTr("Настройки"),     icon: "qrc:/icons/settings_gear.svg" }
                         ]
 
@@ -469,8 +474,20 @@ Window {
             }
 
             SectionPage {
+                CabinetView { anchors.fill: parent }
+            }
+
+            SectionPage {
                 SettingsView { anchors.fill: parent }
             }
+        }
+    }
+
+    Connections {
+        target: (typeof deepLinkManager !== "undefined") ? deepLinkManager : null
+        function onDeepLinkReceived(targetUrl, groupName) {
+            window.showAndRaise();
+            window.openImportSheetWithUrl(targetUrl, groupName);
         }
     }
 

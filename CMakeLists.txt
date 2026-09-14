@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.20)
 
-project(BeaxtyVPN VERSION 1.0.3 LANGUAGES C CXX)
+project(BeaxtyVPN VERSION 1.0.4 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -16,6 +16,7 @@ if (UNIX AND NOT APPLE)
 endif ()
 
 find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets Qml Quick QuickControls2 Network ${QT_DBUS_COMPONENT})
+find_package(Qt6 OPTIONAL_COMPONENTS WebEngineQuick)
 find_package(Threads REQUIRED)
 
 set(THRONE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/3rdparty/throne)
@@ -50,8 +51,8 @@ elseif (APPLE)
     set(MACOSX_BUNDLE_BUNDLE_NAME "BeaxtyVPN")
     set(MACOSX_BUNDLE_GUI_IDENTIFIER "com.beaxty.vpn")
     set(MACOSX_BUNDLE_ICON_FILE "Throne.icns")
-    set(MACOSX_BUNDLE_SHORT_VERSION_STRING "1.0.3")
-    set(MACOSX_BUNDLE_BUNDLE_VERSION "1.0.3")
+    set(MACOSX_BUNDLE_SHORT_VERSION_STRING "1.0.4")
+    set(MACOSX_BUNDLE_BUNDLE_VERSION "1.0.4")
 else ()
     set(PLATFORM_SOURCES
         ${THRONE_DIR}/src/sys/linux/LinuxCap.cpp
@@ -64,7 +65,7 @@ else ()
 endif ()
 
 # Generate NkrVersion.h required by Throne headers
-set(NKR_VERSION "1.0.3.0")
+set(NKR_VERSION "1.0.4.0")
 configure_file("${THRONE_DIR}/cmake/NkrVersion.h.in" "${CMAKE_CURRENT_BINARY_DIR}/NkrVersion.h" @ONLY)
 
 # Protobuf support via Throne's simple-protobuf
@@ -265,6 +266,8 @@ add_library(beaxty_core STATIC
     src/core/TrafficMonitor.cpp
     src/core/ToastManager.hpp
     src/core/ToastManager.cpp
+    src/core/DeepLinkManager.hpp
+    src/core/DeepLinkManager.cpp
     src/core/AutostartManager.hpp
     src/core/AutostartManager.cpp
     src/ui/Theme.hpp
@@ -318,8 +321,8 @@ if (APPLE)
         OUTPUT_NAME "BeaxtyVPN"
         MACOSX_BUNDLE_BUNDLE_NAME "BeaxtyVPN"
         MACOSX_BUNDLE_GUI_IDENTIFIER "com.beaxty.vpn"
-        MACOSX_BUNDLE_SHORT_VERSION_STRING "1.0.3"
-        MACOSX_BUNDLE_BUNDLE_VERSION "1.0.3"
+        MACOSX_BUNDLE_SHORT_VERSION_STRING "1.0.4"
+        MACOSX_BUNDLE_BUNDLE_VERSION "1.0.4"
     )
 endif ()
 
@@ -336,6 +339,10 @@ target_link_libraries(beaxty-vpn PRIVATE
     Qt6::QuickControls2
     Qt6::Qml
 )
+if (TARGET Qt6::WebEngineQuick)
+    target_link_libraries(beaxty-vpn PRIVATE Qt6::WebEngineQuick)
+    target_compile_definitions(beaxty-vpn PRIVATE BEAXTY_HAS_WEBENGINE=1)
+endif()
 
 # Test Targets
 # Console-only tests: everything they need comes in through beaxty_core.
@@ -351,6 +358,7 @@ foreach(_beaxty_test
     test_per_app_routing
     test_ping_diag
     test_security_audit
+    test_deeplink
 )
     add_executable(${_beaxty_test} tests/${_beaxty_test}.cpp ${BEAXTY_RESOURCES})
     target_link_libraries(${_beaxty_test} PRIVATE beaxty_core)
@@ -364,6 +372,10 @@ target_link_libraries(test_capture_ui PRIVATE
     Qt6::QuickControls2
     Qt6::Qml
 )
+if (TARGET Qt6::WebEngineQuick)
+    target_link_libraries(test_capture_ui PRIVATE Qt6::WebEngineQuick)
+    target_compile_definitions(test_capture_ui PRIVATE BEAXTY_HAS_WEBENGINE=1)
+endif()
 
 
 
@@ -372,7 +384,8 @@ target_link_libraries(test_capture_ui PRIVATE
 # Deterministic, local checks available through one standard command.
 enable_testing()
 foreach(_test test_hwid test_config_builder test_subscription_import test_subscription_safety
-              test_routing_presets test_full_tunnel_wiring test_per_app_routing test_security_audit)
+              test_routing_presets test_full_tunnel_wiring test_per_app_routing test_security_audit
+              test_deeplink)
     add_test(NAME ${_test} COMMAND ${_test})
     set_tests_properties(${_test} PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 60)
     # Existing tests use assert(); keep their checks active in Release builds.

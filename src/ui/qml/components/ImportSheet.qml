@@ -44,6 +44,16 @@ FocusScope {
         inputField.forceActiveFocus();
     }
 
+    function openWithUrl(url, groupName) {
+        if (busy) return;
+        previousFocus = root.Window.window ? root.Window.window.activeFocusItem : null;
+        inputField.text = url ? url : "";
+        groupNameField.text = groupName ? groupName : "";
+        root.opacity = 1.0;
+        sheetScroll.contentItem.contentY = 0;
+        inputField.forceActiveFocus();
+    }
+
     function close() {
         if (busy) return;
         root.opacity = 0.0;

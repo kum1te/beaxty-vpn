@@ -16,6 +16,7 @@
 #include <QTimer>
 #include <QLockFile>
 
+#include "src/core/DeepLinkManager.hpp"
 #include "src/core/ThroneEngine.hpp"
 #include "src/core/ConfigAdapter.hpp"
 #include "src/core/DeviceIdentity.hpp"
@@ -27,6 +28,11 @@
 #include "src/core/AppPrefs.hpp"
 #include "src/ui/Theme.hpp"
 #include "src/bridge/MainWindowBridge.hpp"
+
+#if __has_include(<QtWebEngineQuick/qtwebenginequickglobal.h>)
+#include <QtWebEngineQuick/qtwebenginequickglobal.h>
+#define BEAXTY_HAS_WEBENGINE 1
+#endif
 
 #include <QActionGroup>
 
@@ -148,6 +154,9 @@ static void setupUnixSignalHandlers(QObject *parent) {
 #endif
 
 int main(int argc, char *argv[]) {
+#if defined(BEAXTY_HAS_WEBENGINE)
+    QtWebEngineQuick::initialize();
+#endif
 #if defined(_WIN32)
     if (!isRunningAsAdmin()) {
         relaunchAsAdmin(argc, argv);
@@ -161,7 +170,7 @@ int main(int argc, char *argv[]) {
 #endif
     app.setApplicationName(QStringLiteral("beaxty VPN"));
     app.setOrganizationName(QStringLiteral("Beaxty"));
-    app.setApplicationVersion(QStringLiteral("1.0.3"));
+    app.setApplicationVersion(QStringLiteral("1.0.4"));
     app.setWindowIcon(QIcon(QStringLiteral(":/icons/app_icon.svg")));
 
     QCommandLineParser parser;
@@ -182,7 +191,18 @@ int main(int argc, char *argv[]) {
                                       QStringLiteral("Seed sample nodes when the database is empty (UI testing)"));
     parser.addOption(demoDataOption);
 
+    parser.addPositionalArgument(QStringLiteral("url"), QStringLiteral("Optional deep link URL (beaxty://...)"));
+
     parser.process(app);
+
+    // Extract deep link if provided in positional arguments
+    QString pendingDeepLink;
+    for (const QString &posArg : parser.positionalArguments()) {
+        if (posArg.startsWith(QStringLiteral("beaxty://"), Qt::CaseInsensitive)) {
+            pendingDeepLink = posArg;
+            break;
+        }
+    }
 
     // Single-instance protection to prevent conflicts over core daemon and network
     // interface. A second launch pokes the running instance to show its window,
@@ -193,10 +213,14 @@ int main(int argc, char *argv[]) {
         QLocalSocket poke;
         poke.connectToServer(kActivationSocketName);
         if (poke.waitForConnected(500)) {
-            poke.write("show");
+            if (!pendingDeepLink.isEmpty()) {
+                poke.write("DEEPLINK " + pendingDeepLink.toUtf8() + "\n");
+            } else {
+                poke.write("show\n");
+            }
             poke.waitForBytesWritten(300);
             poke.disconnectFromServer();
-            qInfo() << "[BeaxtyVPN] Already running; asked the existing window to show.";
+            qInfo() << "[BeaxtyVPN] Already running; forwarded activation/deeplink to existing window.";
         } else {
             qWarning() << "[BeaxtyVPN] Another instance is already running. Exiting.";
         }
@@ -212,6 +236,7 @@ int main(int argc, char *argv[]) {
     ToastManager toastManager;
 
     // Core Managers & Facades
+    DeepLinkManager deepLinkManager;
     ThroneEngine engine;
     DeviceIdentity deviceIdentity;
     RoutingManager routingManager;
@@ -220,6 +245,9 @@ int main(int argc, char *argv[]) {
     LocalizationManager locManager;
     AutostartManager autostartManager;
     AppPrefsService appPrefsService;
+
+    // Register beaxty:// URL scheme handler in OS if enabled or first run
+    DeepLinkManager::registerScheme();
     // Wire headless bridge callbacks to facade managers
     BridgeCallbacks::onProfileStart = [&](int id) {
         if (id >= 0) configAdapter.selectServer(id);
@@ -291,6 +319,7 @@ int main(int argc, char *argv[]) {
     qmlEngine.rootContext()->setContextProperty(QStringLiteral("autostartManager"), &autostartManager);
     qmlEngine.rootContext()->setContextProperty(QStringLiteral("appPrefs"), &appPrefsService);
     qmlEngine.rootContext()->setContextProperty(QStringLiteral("AppPrefs"), &appPrefsService);
+    qmlEngine.rootContext()->setContextProperty(QStringLiteral("deepLinkManager"), &deepLinkManager);
 
     // Load main QML file from resource or local file
     const QUrl url(QStringLiteral("qrc:/qml/App.qml"));
@@ -304,6 +333,13 @@ int main(int argc, char *argv[]) {
 
     // Always run the UI embedded in this build, independent of the launch directory.
     qmlEngine.load(url);
+
+    // If application was launched cold with a deep link argument, process it once event loop starts
+    if (!pendingDeepLink.isEmpty()) {
+        QTimer::singleShot(250, [&deepLinkManager, pendingDeepLink]() {
+            deepLinkManager.handleDeepLink(pendingDeepLink);
+        });
+    }
 
 #if defined(__linux__)
     malloc_trim(0);
@@ -494,8 +530,19 @@ int main(int argc, char *argv[]) {
     QLocalServer::removeServer(kActivationSocketName);
     if (activationServer.listen(kActivationSocketName)) {
         QObject::connect(&activationServer, &QLocalServer::newConnection, &app,
-                         [&activationServer, showMainWindow]() {
+                         [&activationServer, showMainWindow, &deepLinkManager]() {
             while (auto *conn = activationServer.nextPendingConnection()) {
+                QObject::connect(conn, &QLocalSocket::readyRead, conn, [conn, showMainWindow, &deepLinkManager]() {
+                    QByteArray data = conn->readAll();
+                    QString msg = QString::fromUtf8(data).trimmed();
+                    showMainWindow();
+                    if (msg.startsWith(QStringLiteral("DEEPLINK "))) {
+                        QString url = msg.mid(9).trimmed();
+                        if (!url.isEmpty()) {
+                            deepLinkManager.handleDeepLink(url);
+                        }
+                    }
+                });
                 QObject::connect(conn, &QLocalSocket::disconnected, conn, &QLocalSocket::deleteLater);
                 showMainWindow();
             }

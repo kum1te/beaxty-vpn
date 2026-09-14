@@ -21,6 +21,8 @@
         <file alias="views/DashboardView.qml">../src/ui/qml/views/DashboardView.qml</file>
         <file alias="views/NodesView.qml">../src/ui/qml/views/NodesView.qml</file>
         <file alias="views/RoutingView.qml">../src/ui/qml/views/RoutingView.qml</file>
+        <file alias="views/CabinetView.qml">../src/ui/qml/views/CabinetView.qml</file>
+        <file alias="views/CabinetWebEngineComponent.qml">../src/ui/qml/views/CabinetWebEngineComponent.qml</file>
         <file alias="views/SettingsView.qml">../src/ui/qml/views/SettingsView.qml</file>
     </qresource>
     <qresource prefix="/shaders">
@@ -62,5 +64,7 @@
         <file alias="edit_dark.svg">icons/edit_dark.svg</file>
         <file alias="filter.svg">icons/filter.svg</file>
         <file alias="filter_dark.svg">icons/filter_dark.svg</file>
+        <file alias="cabinet.svg">icons/cabinet.svg</file>
+        <file alias="cabinet_dark.svg">icons/cabinet_dark.svg</file>
     </qresource>
 </RCC>

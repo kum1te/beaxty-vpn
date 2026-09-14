@@ -17,6 +17,7 @@
 #include <cmath>
 
 #include "src/core/ThroneEngine.hpp"
+#include "src/core/DeepLinkManager.hpp"
 #include "src/core/ConfigAdapter.hpp"
 #include "src/core/DeviceIdentity.hpp"
 #include "src/core/RoutingManager.hpp"
@@ -27,11 +28,19 @@
 #include "src/ui/Theme.hpp"
 #include "src/bridge/MainWindowBridge.hpp"
 
+#if defined(BEAXTY_HAS_WEBENGINE)
+#include <QtWebEngineQuick/qtwebenginequickglobal.h>
+#endif
+
 int main(int argc, char *argv[]) {
     // Force offscreen platform for headless environments (CI / Container / Sandbox)
     if (qEnvironmentVariableIsEmpty("QT_QPA_PLATFORM")) {
         qputenv("QT_QPA_PLATFORM", "offscreen");
     }
+
+#if defined(BEAXTY_HAS_WEBENGINE)
+    QtWebEngineQuick::initialize();
+#endif
 
     qputenv("QT_QUICK_CONTROLS_STYLE", "Basic");
     QApplication app(argc, argv);
@@ -40,6 +49,7 @@ int main(int argc, char *argv[]) {
 
     Theme theme;
     ToastManager toastManager;
+    DeepLinkManager deepLinkManager;
     ThroneEngine engine;
     DeviceIdentity deviceIdentity;
     RoutingManager routingManager;
@@ -75,6 +85,7 @@ int main(int argc, char *argv[]) {
     qmlEngine.rootContext()->setContextProperty(QStringLiteral("i18n"), &locManager);
     qmlEngine.rootContext()->setContextProperty(QStringLiteral("appPrefs"), &appPrefsService);
     qmlEngine.rootContext()->setContextProperty(QStringLiteral("AppPrefs"), &appPrefsService);
+    qmlEngine.rootContext()->setContextProperty(QStringLiteral("deepLinkManager"), &deepLinkManager);
 
     qmlEngine.addImportPath(QStringLiteral("qrc:/qml"));
     qmlEngine.load(QUrl(QStringLiteral("qrc:/qml/App.qml")));
@@ -423,7 +434,13 @@ int main(int argc, char *argv[]) {
     // 13. Advanced Routing View: 960x640
     steps->push_back({[&]() {
         grab("build/beaxty_advanced_routing.png");
-        setView(3); // Settings View
+        setView(3); // Cabinet View
+    }, 450});
+
+    // 13b. Cabinet View (Fallback/Web): 960x640
+    steps->push_back({[&]() {
+        grab("build/beaxty_cabinet_960x640.png");
+        setView(4); // Settings View
     }, 450});
 
     // 14. Settings View: 960x640
@@ -464,7 +481,7 @@ int main(int argc, char *argv[]) {
     // 16d. Routing View Light Theme
     steps->push_back({[&]() {
         grab("build/beaxty_light_routing.png");
-        setView(3); // Settings View in Light Theme
+        setView(4); // Settings View in Light Theme
     }, 450});
 
     // 17. Settings Light Theme: 960x640
@@ -479,7 +496,7 @@ int main(int argc, char *argv[]) {
     // 18. Dashboard English: 960x640
     steps->push_back({[&]() {
         grab("build/beaxty_english_dashboard.png");
-        setView(3); // Settings in English
+        setView(4); // Settings in English
     }, 450});
 
     // 19. Settings English: 960x640

@@ -362,6 +362,37 @@ Item {
                 }
 
                 // ==========================================
+                // Личный кабинет
+                // ==========================================
+                Text {
+                    text: qsTr("ЛИЧНЫЙ КАБИНЕТ")
+                    color: Theme.textMuted
+                    font.pixelSize: 11
+                    font.bold: true
+                    font.letterSpacing: 1.2
+                    Layout.topMargin: 8
+                }
+
+                ToggleRow {
+                    title: qsTr("Открывать кабинет во внешнем браузере")
+                    description: qsTr("При переходе во вкладку «Кабинет» отображать карточку для перехода в системный браузер вместо встроенного веб-движка.")
+                    checked: (typeof appPrefs !== "undefined") ? appPrefs.getBool("cabinet_external_browser", false) : false
+                    onToggled: function(value) {
+                        if (typeof appPrefs !== "undefined") appPrefs.setBool("cabinet_external_browser", value);
+                    }
+                }
+
+                ToggleRow {
+                    title: qsTr("Режим экономии памяти для кабинета")
+                    badge: qsTr("РЕКОМЕНДУЕТСЯ")
+                    description: qsTr("Автоматически выгружать веб-движок Chromium при неактивности или сворачивании приложения для полного освобождения RAM.")
+                    checked: (typeof appPrefs !== "undefined") ? appPrefs.getBool("cabinet_memory_saver", true) : true
+                    onToggled: function(value) {
+                        if (typeof appPrefs !== "undefined") appPrefs.setBool("cabinet_memory_saver", value);
+                    }
+                }
+
+                // ==========================================
                 // Безопасность и идентификация
                 // ==========================================
                 Text {
@@ -687,7 +718,7 @@ Item {
                             spacing: 3
 
                             Text {
-                                text: "beaxty VPN v1.0.3"
+                                text: "beaxty VPN v1.0.4"
                                 color: Theme.textPrimary
                                 font.pixelSize: 14
                                 font.bold: true
