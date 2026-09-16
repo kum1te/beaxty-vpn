@@ -300,6 +300,8 @@ static void ensureDictionariesInitialized() {
         {QStringLiteral("Сохранить отчет для поддержки"), QStringLiteral("Save Support Report")},
         {QStringLiteral("Экспорт обезличенного диагностического лога, сетевых маршрутов и состояния системы для службы поддержки."), QStringLiteral("Export redacted diagnostic logs, network routes, and system info for support.")},
         {QStringLiteral("Сохранить отчет"), QStringLiteral("Save Report")},
+        {QStringLiteral("Встроенный веб-движок недоступен в данной сборке. Личный кабинет открывается в системном браузере."), QStringLiteral("Built-in web engine is not available in this build. Cabinet will open in system browser.")},
+        {QStringLiteral("В текущей сборке встроенный веб-движок не установлен. Кабинет всегда открывается в системном браузере."), QStringLiteral("Built-in web engine is not installed in current build. Cabinet always opens in system browser.")},
         {QStringLiteral("О ПРИЛОЖЕНИИ"), QStringLiteral("ABOUT")},
         {QStringLiteral("Minimalist Desktop VPN • Powered by Throne, sing-box & Xray-core • GPL-3.0"), QStringLiteral("Minimalist Desktop VPN • Powered by Throne, sing-box & Xray-core • GPL-3.0")},
 

@@ -656,10 +656,12 @@ Item {
                                                             id: supRow
                                                             anchors.centerIn: parent
                                                             spacing: 5
-                                                            Text {
+                                                            Image {
+                                                                width: 12
+                                                                height: 12
+                                                                source: Theme.icon("qrc:/icons/chat.svg", Theme.isDark)
                                                                 anchors.verticalCenter: parent.verticalCenter
-                                                                text: "💬"
-                                                                font.pixelSize: 11
+                                                                opacity: 0.8
                                                             }
                                                             Text {
                                                                 anchors.verticalCenter: parent.verticalCenter
@@ -697,10 +699,12 @@ Item {
                                                             id: webRow
                                                             anchors.centerIn: parent
                                                             spacing: 5
-                                                            Text {
+                                                            Image {
+                                                                width: 12
+                                                                height: 12
+                                                                source: Theme.icon("qrc:/icons/globe.svg", Theme.isDark)
                                                                 anchors.verticalCenter: parent.verticalCenter
-                                                                text: "🌐"
-                                                                font.pixelSize: 11
+                                                                opacity: 0.8
                                                             }
                                                             Text {
                                                                 anchors.verticalCenter: parent.verticalCenter
@@ -1021,9 +1025,12 @@ Item {
                                         anchors.centerIn: parent
                                         spacing: 8
 
-                                        Text {
-                                            text: "💬"
-                                            font.pixelSize: 13
+                                        Image {
+                                            width: 14
+                                            height: 14
+                                            source: Theme.icon("qrc:/icons/chat.svg", Theme.isDark)
+                                            Layout.alignment: Qt.AlignVCenter
+                                            opacity: 0.85
                                         }
 
                                         Text {
@@ -1059,9 +1066,12 @@ Item {
                                         anchors.centerIn: parent
                                         spacing: 8
 
-                                        Text {
-                                            text: "🌐"
-                                            font.pixelSize: 13
+                                        Image {
+                                            width: 14
+                                            height: 14
+                                            source: Theme.icon("qrc:/icons/globe.svg", Theme.isDark)
+                                            Layout.alignment: Qt.AlignVCenter
+                                            opacity: 0.85
                                         }
 
                                         Text {

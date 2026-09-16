@@ -124,19 +124,86 @@ fi
     --executable "${APPDIR}/usr/bin/beaxty-vpn" \
     --desktop-file "${APPDIR}/beaxty-vpn.desktop" \
     "${ICON_OPT[@]}" \
-    --plugin qt
+    --plugin qt || true
 
-# 6. Create run.sh launcher for standalone portable usage
-echo "==> Creating standalone portable launcher (run.sh)..."
+# Ensure QtWebEngineProcess and resources are copied if built with WebEngine
+QT_LIB_DIR="$(dirname "$("${QMAKE}" -query QT_INSTALL_LIBS)")/lib"
+QT_LIBEXEC_DIR="$("${QMAKE}" -query QT_INSTALL_LIBEXECS)"
+QT_DATA_DIR="$("${QMAKE}" -query QT_INSTALL_DATA)"
+QT_TRANS_DIR="$("${QMAKE}" -query QT_INSTALL_TRANSLATIONS)"
+
+if [ -f "${QT_LIBEXEC_DIR}/QtWebEngineProcess" ]; then
+    echo "==> Deploying QtWebEngineProcess..."
+    mkdir -p "${APPDIR}/usr/libexec"
+    cp -p "${QT_LIBEXEC_DIR}/QtWebEngineProcess" "${APPDIR}/usr/libexec/QtWebEngineProcess"
+    chmod +x "${APPDIR}/usr/libexec/QtWebEngineProcess"
+fi
+
+if [ -d "${QT_DATA_DIR}/resources" ]; then
+    echo "==> Deploying QtWebEngine resources..."
+    mkdir -p "${APPDIR}/usr/resources"
+    cp -p "${QT_DATA_DIR}/resources/"*.pak "${APPDIR}/usr/resources/" 2>/dev/null || true
+    cp -p "${QT_DATA_DIR}/resources/"*.dat "${APPDIR}/usr/resources/" 2>/dev/null || true
+fi
+
+if [ -d "${QT_TRANS_DIR}/qtwebengine_locales" ]; then
+    echo "==> Deploying QtWebEngine translations..."
+    mkdir -p "${APPDIR}/usr/translations/qtwebengine_locales"
+    cp -p "${QT_TRANS_DIR}/qtwebengine_locales/"*.pak "${APPDIR}/usr/translations/qtwebengine_locales/" 2>/dev/null || true
+fi
+
+# 6. Create custom AppRun and run.sh launcher with fontconfig and WebEngine support
+echo "==> Creating custom AppRun and run.sh with system font & WebEngine environment..."
+cat << 'LAUNCHER' > "${APPDIR}/AppRun"
+#!/usr/bin/env bash
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+export APPDIR="${HERE}"
+
+# System Fontconfig fallback so AppImage uses host fonts (Noto Color Emoji, system sans, etc.)
+if [ -z "${FONTCONFIG_PATH:-}" ]; then
+    if [ -d "/etc/fonts" ]; then
+        export FONTCONFIG_PATH="/etc/fonts"
+    fi
+fi
+
+# Chromium sandbox does not work unprivileged without SUID helper inside AppImage
+if [ -z "${QTWEBENGINE_CHROMIUM_FLAGS:-}" ]; then
+    export QTWEBENGINE_CHROMIUM_FLAGS="--no-sandbox"
+fi
+
+# Libraries and Qt paths
+export LD_LIBRARY_PATH="${HERE}/usr/lib:${HERE}/usr/lib/x86_64-linux-gnu:${LD_LIBRARY_PATH:-}"
+export QT_PLUGIN_PATH="${HERE}/usr/plugins"
+export QML_IMPORT_PATH="${HERE}/usr/qml"
+export QML2_IMPORT_PATH="${HERE}/usr/qml"
+export QTWEBENGINEPROCESS_PATH="${HERE}/usr/libexec/QtWebEngineProcess"
+export QTWEBENGINE_RESOURCES_PATH="${HERE}/usr/resources"
+
+exec "${HERE}/usr/bin/beaxty-vpn" "$@"
+LAUNCHER
+chmod +x "${APPDIR}/AppRun"
+
 cat << 'LAUNCHER' > "${APPDIR}/run.sh"
 #!/usr/bin/env bash
 # BeaxtyVPN Portable Launcher
 set -e
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+if [ -z "${FONTCONFIG_PATH:-}" ] && [ -d "/etc/fonts" ]; then
+    export FONTCONFIG_PATH="/etc/fonts"
+fi
+
+if [ -z "${QTWEBENGINE_CHROMIUM_FLAGS:-}" ]; then
+    export QTWEBENGINE_CHROMIUM_FLAGS="--no-sandbox"
+fi
+
 export LD_LIBRARY_PATH="${HERE}/usr/lib:${HERE}/usr/lib/x86_64-linux-gnu:${LD_LIBRARY_PATH:-}"
 export QT_PLUGIN_PATH="${HERE}/usr/plugins"
 export QML_IMPORT_PATH="${HERE}/usr/qml"
 export QML2_IMPORT_PATH="${HERE}/usr/qml"
+export QTWEBENGINEPROCESS_PATH="${HERE}/usr/libexec/QtWebEngineProcess"
+export QTWEBENGINE_RESOURCES_PATH="${HERE}/usr/resources"
+
 exec "${HERE}/usr/bin/beaxty-vpn" "$@"
 LAUNCHER
 chmod +x "${APPDIR}/run.sh"

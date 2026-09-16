@@ -14,6 +14,7 @@ Item {
     readonly property bool hasEngine: typeof throneEngine !== "undefined"
     readonly property bool hasIdentity: typeof deviceIdentity !== "undefined"
     readonly property bool hasLoc: typeof locManager !== "undefined"
+    readonly property bool hasWebEngineSupport: (typeof hasWebEngine !== "undefined") ? Boolean(hasWebEngine) : false
 
     ScrollView {
         id: settingsScroll
@@ -375,10 +376,16 @@ Item {
 
                 ToggleRow {
                     title: qsTr("Открывать кабинет во внешнем браузере")
-                    description: qsTr("При переходе во вкладку «Кабинет» отображать карточку для перехода в системный браузер вместо встроенного веб-движка.")
-                    checked: (typeof appPrefs !== "undefined") ? appPrefs.getBool("cabinet_external_browser", false) : false
+                    description: !root.hasWebEngineSupport ?
+                                 qsTr("В текущей сборке встроенный веб-движок не установлен. Кабинет всегда открывается в системном браузере.") :
+                                 qsTr("При переходе во вкладку «Кабинет» отображать карточку для перехода в системный браузер вместо встроенного веб-движка.")
+                    checked: !root.hasWebEngineSupport || ((typeof appPrefs !== "undefined") ? appPrefs.getBool("cabinet_external_browser", false) : false)
+                    switchEnabled: root.hasWebEngineSupport
+                    opacity: root.hasWebEngineSupport ? 1.0 : 0.55
                     onToggled: function(value) {
-                        if (typeof appPrefs !== "undefined") appPrefs.setBool("cabinet_external_browser", value);
+                        if (typeof appPrefs !== "undefined" && root.hasWebEngineSupport) {
+                            appPrefs.setBool("cabinet_external_browser", value);
+                        }
                     }
                 }
 
@@ -387,8 +394,12 @@ Item {
                     badge: qsTr("РЕКОМЕНДУЕТСЯ")
                     description: qsTr("Автоматически выгружать веб-движок Chromium при неактивности или сворачивании приложения для полного освобождения RAM.")
                     checked: (typeof appPrefs !== "undefined") ? appPrefs.getBool("cabinet_memory_saver", true) : true
+                    switchEnabled: root.hasWebEngineSupport
+                    opacity: root.hasWebEngineSupport ? 1.0 : 0.55
                     onToggled: function(value) {
-                        if (typeof appPrefs !== "undefined") appPrefs.setBool("cabinet_memory_saver", value);
+                        if (typeof appPrefs !== "undefined" && root.hasWebEngineSupport) {
+                            appPrefs.setBool("cabinet_memory_saver", value);
+                        }
                     }
                 }
 
@@ -718,7 +729,7 @@ Item {
                             spacing: 3
 
                             Text {
-                                text: "beaxty VPN v1.0.4"
+                                text: "beaxty VPN v1.0.5"
                                 color: Theme.textPrimary
                                 font.pixelSize: 14
                                 font.bold: true

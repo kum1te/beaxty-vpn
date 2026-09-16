@@ -13,7 +13,8 @@ Item {
 
     readonly property string cabinetUrl: "https://cabinet.beaxty.com"
     readonly property bool hasWebEngineSupport: (typeof hasWebEngine !== "undefined") ? Boolean(hasWebEngine) : false
-    property bool useExternalBrowser: ((typeof appPrefs !== "undefined") ? appPrefs.getBool("cabinet_external_browser", false) : false) || !hasWebEngineSupport
+    property bool userWantsExternal: (typeof appPrefs !== "undefined") ? appPrefs.getBool("cabinet_external_browser", false) : false
+    readonly property bool useExternalBrowser: userWantsExternal || !hasWebEngineSupport
     property bool memorySaverMode: (typeof appPrefs !== "undefined") ? appPrefs.getBool("cabinet_memory_saver", true) : true
     readonly property bool isCurrentTab: root.visible
 
@@ -47,7 +48,7 @@ Item {
         target: (typeof appPrefs !== "undefined") ? appPrefs : null
         function onPrefChanged(key) {
             if (key === "cabinet_external_browser") {
-                root.useExternalBrowser = appPrefs.getBool("cabinet_external_browser", false) || !root.hasWebEngineSupport;
+                root.userWantsExternal = appPrefs.getBool("cabinet_external_browser", false);
                 if (root.useExternalBrowser) {
                     webLoader.active = false;
                 } else if (root.isCurrentTab && root.hasWebEngineSupport) {
@@ -200,10 +201,12 @@ Item {
                             spacing: 6
                             Layout.alignment: Qt.AlignVCenter
 
-                            Text {
-                                text: "🔒"
-                                font.pixelSize: 11
+                            Image {
+                                width: 12
+                                height: 12
+                                source: Theme.icon("qrc:/icons/lock.svg", Theme.isDark)
                                 anchors.verticalCenter: parent.verticalCenter
+                                opacity: 0.8
                             }
 
                             Text {
@@ -310,20 +313,38 @@ Item {
             Layout.fillHeight: true
 
             // Fallback / External Mode Card
-            Card {
+            Rectangle {
                 anchors.centerIn: parent
                 width: Math.min(parent.width - 48, 560)
+                height: fallbackCol.implicitHeight + 48
+                radius: Theme.radiusMedium
+                color: Theme.cardBg
+                border.color: Theme.cardBorder
+                border.width: 1
                 visible: root.useExternalBrowser || !webLoader.active || (webLoader.status === Loader.Error)
                 z: 1
 
-                ColumnLayout {
-                    anchors.fill: parent
-                    spacing: 18
+                // Subtle top highlight rim
+                Rectangle {
+                    anchors.top: parent.top
+                    anchors.left: parent.left
+                    anchors.right: parent.right
+                    anchors.topMargin: 1
+                    anchors.leftMargin: parent.radius
+                    anchors.rightMargin: parent.radius
+                    height: 1
+                    color: Theme.rimHighlight
+                    opacity: 0.6
+                }
 
-                    Item { Layout.preferredHeight: 4 }
+                Column {
+                    id: fallbackCol
+                    anchors.centerIn: parent
+                    width: parent.width - 48
+                    spacing: 16
 
                     Rectangle {
-                        Layout.alignment: Qt.AlignHCenter
+                        anchors.horizontalCenter: parent.horizontalCenter
                         width: 56
                         height: 56
                         radius: 16
@@ -339,12 +360,13 @@ Item {
                         }
                     }
 
-                    ColumnLayout {
-                        Layout.alignment: Qt.AlignHCenter
+                    Column {
+                        anchors.horizontalCenter: parent.horizontalCenter
+                        width: parent.width
                         spacing: 6
 
                         Text {
-                            Layout.alignment: Qt.AlignHCenter
+                            anchors.horizontalCenter: parent.horizontalCenter
                             text: qsTr("Личный кабинет beaxty VPN")
                             color: Theme.textPrimary
                             font.pixelSize: 18
@@ -352,27 +374,32 @@ Item {
                         }
 
                         Text {
-                            Layout.alignment: Qt.AlignHCenter
-                            text: root.useExternalBrowser ?
-                                  qsTr("Включен режим открытия во внешнем браузере.") :
-                                  qsTr("Управляйте подпиской, продлевайте доступ и просматривайте статистику.")
+                            anchors.horizontalCenter: parent.horizontalCenter
+                            text: !root.hasWebEngineSupport ?
+                                  qsTr("Встроенный веб-движок недоступен в данной сборке. Личный кабинет открывается в системном браузере.") :
+                                  (root.userWantsExternal ?
+                                      qsTr("Включен режим открытия во внешнем браузере.") :
+                                      qsTr("Управляйте подпиской, продлевайте доступ и просматривайте статистику."))
                             color: Theme.textSecondary
                             font.pixelSize: 13
                             horizontalAlignment: Text.AlignHCenter
+                            wrapMode: Text.WordWrap
+                            width: Math.min(parent.width, 480)
                         }
                     }
 
                     ActionButton {
-                        Layout.alignment: Qt.AlignHCenter
+                        anchors.horizontalCenter: parent.horizontalCenter
                         text: qsTr("Открыть в браузере (cabinet.beaxty.com)")
                         primary: true
                         onClicked: Qt.openUrlExternally(root.cabinetUrl)
                     }
 
                     Item {
-                        Layout.fillWidth: true
-                        Layout.preferredHeight: 28
-                        visible: root.useExternalBrowser
+                        anchors.horizontalCenter: parent.horizontalCenter
+                        width: parent.width
+                        height: 24
+                        visible: root.hasWebEngineSupport && root.userWantsExternal
 
                         Text {
                             anchors.centerIn: parent
@@ -381,8 +408,6 @@ Item {
                             font.pixelSize: 11
                         }
                     }
-
-                    Item { Layout.preferredHeight: 4 }
                 }
             }
 

@@ -66,5 +66,11 @@
         <file alias="filter_dark.svg">icons/filter_dark.svg</file>
         <file alias="cabinet.svg">icons/cabinet.svg</file>
         <file alias="cabinet_dark.svg">icons/cabinet_dark.svg</file>
+        <file alias="lock.svg">icons/lock.svg</file>
+        <file alias="lock_dark.svg">icons/lock_dark.svg</file>
+        <file alias="chat.svg">icons/chat.svg</file>
+        <file alias="chat_dark.svg">icons/chat_dark.svg</file>
+        <file alias="globe.svg">icons/globe.svg</file>
+        <file alias="globe_dark.svg">icons/globe_dark.svg</file>
     </qresource>
 </RCC>

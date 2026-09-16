@@ -40,7 +40,10 @@ jobs:
             libdbus-1-dev libpulse-dev libasound2-dev \
             libx11-xcb-dev libfontconfig1-dev libfreetype6-dev \
             librsvg2-bin protobuf-compiler libprotobuf-dev \
-            libfuse2 file
+            libfuse2 file \
+            libnss3-dev libnspr4-dev libdrm-dev libgbm-dev \
+            libxcomposite-dev libxdamage-dev libxrandr-dev \
+            libxtst-dev libxcursor-dev libxi-dev
 
       - name: Install Qt 6.8
         uses: jurplel/install-qt-action@v4
@@ -48,7 +51,7 @@ jobs:
           version: '6.8.0'
           target: 'desktop'
           arch: 'linux_gcc_64'
-          modules: 'qtshadertools qt5compat'
+          modules: 'qtshadertools qt5compat qtwebengine'
 
       - name: Build Core Daemon
         run: |
@@ -98,7 +101,7 @@ jobs:
           version: '6.8.0'
           target: 'desktop'
           arch: 'win64_msvc2022_64'
-          modules: 'qtshadertools qt5compat'
+          modules: 'qtshadertools qt5compat qtwebengine'
 
       - name: Build Core Daemon (Windows)
         shell: bash
