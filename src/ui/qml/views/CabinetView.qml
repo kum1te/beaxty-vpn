@@ -12,7 +12,8 @@ Item {
     objectName: "cabinetView"
 
     readonly property string cabinetUrl: "https://cabinet.beaxty.com"
-    property bool useExternalBrowser: (typeof appPrefs !== "undefined") ? appPrefs.getBool("cabinet_external_browser", false) : false
+    readonly property bool hasWebEngineSupport: (typeof hasWebEngine !== "undefined") ? Boolean(hasWebEngine) : false
+    property bool useExternalBrowser: ((typeof appPrefs !== "undefined") ? appPrefs.getBool("cabinet_external_browser", false) : false) || !hasWebEngineSupport
     property bool memorySaverMode: (typeof appPrefs !== "undefined") ? appPrefs.getBool("cabinet_memory_saver", true) : true
     readonly property bool isCurrentTab: root.visible
 
@@ -24,7 +25,7 @@ Item {
         id: discardTimer
         interval: 180000 // 3 minutes
         repeat: false
-        running: (!root.isCurrentTab || !root.isWindowActive) && root.memorySaverMode && webLoader.status === Loader.Ready
+        running: root.hasWebEngineSupport && (!root.isCurrentTab || !root.isWindowActive) && root.memorySaverMode && webLoader.status === Loader.Ready
         onTriggered: {
             if (!root.isCurrentTab || !root.isWindowActive) {
                 console.log("[CabinetView] Memory saver triggered: unloading WebEngineView to free RAM");
@@ -34,7 +35,7 @@ Item {
     }
 
     onIsCurrentTabChanged: {
-        if (isCurrentTab && !useExternalBrowser) {
+        if (isCurrentTab && root.hasWebEngineSupport && !useExternalBrowser) {
             discardTimer.stop();
             if (!webLoader.active) {
                 webLoader.active = true;
@@ -46,10 +47,10 @@ Item {
         target: (typeof appPrefs !== "undefined") ? appPrefs : null
         function onPrefChanged(key) {
             if (key === "cabinet_external_browser") {
-                root.useExternalBrowser = appPrefs.getBool("cabinet_external_browser", false);
+                root.useExternalBrowser = appPrefs.getBool("cabinet_external_browser", false) || !root.hasWebEngineSupport;
                 if (root.useExternalBrowser) {
                     webLoader.active = false;
-                } else if (root.isCurrentTab) {
+                } else if (root.isCurrentTab && root.hasWebEngineSupport) {
                     webLoader.active = true;
                 }
             } else if (key === "cabinet_memory_saver") {
@@ -385,26 +386,26 @@ Item {
                 }
             }
 
-            // Lazy WebEngineView Loader
+            // Lazy WebEngineView Loader (dynamically loaded via source string to prevent QML parse failures if QtWebEngine is missing)
             Loader {
                 id: webLoader
                 anchors.fill: parent
                 active: false // Critical requirement: lazy loading, 0MB on launch
                 asynchronous: true
-                visible: !root.useExternalBrowser && status === Loader.Ready
+                visible: root.hasWebEngineSupport && !root.useExternalBrowser && status === Loader.Ready
+                source: (root.hasWebEngineSupport && !root.useExternalBrowser) ? "CabinetWebEngineComponent.qml" : ""
+            }
 
-                sourceComponent: Component {
-                    CabinetWebEngineComponent {
-                        id: webComponent
-                        onDeepLinkTriggered: function(url) {
-                            if (typeof deepLinkManager !== "undefined") {
-                                deepLinkManager.handleDeepLink(url);
-                            }
-                        }
-                        onExternalUrlTriggered: function(url) {
-                            Qt.openUrlExternally(url);
-                        }
+            Connections {
+                target: webLoader.item
+                ignoreUnknownSignals: true
+                function onDeepLinkTriggered(url) {
+                    if (typeof deepLinkManager !== "undefined") {
+                        deepLinkManager.handleDeepLink(url);
                     }
+                }
+                function onExternalUrlTriggered(url) {
+                    Qt.openUrlExternally(url);
                 }
             }
 
@@ -412,7 +413,7 @@ Item {
             Rectangle {
                 anchors.fill: parent
                 color: Theme.bgDark
-                visible: !root.useExternalBrowser && webLoader.item && webLoader.item.hasError
+                visible: root.hasWebEngineSupport && !root.useExternalBrowser && webLoader.item && webLoader.item.hasError
                 z: 5
 
                 ColumnLayout {

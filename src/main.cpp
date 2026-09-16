@@ -320,6 +320,18 @@ int main(int argc, char *argv[]) {
     qmlEngine.rootContext()->setContextProperty(QStringLiteral("appPrefs"), &appPrefsService);
     qmlEngine.rootContext()->setContextProperty(QStringLiteral("AppPrefs"), &appPrefsService);
     qmlEngine.rootContext()->setContextProperty(QStringLiteral("deepLinkManager"), &deepLinkManager);
+#if defined(BEAXTY_HAS_WEBENGINE)
+    bool webEngineAvailable = false;
+    for (const QString &importPath : qmlEngine.importPathList()) {
+        if (QDir(importPath + QStringLiteral("/QtWebEngine")).exists()) {
+            webEngineAvailable = true;
+            break;
+        }
+    }
+    qmlEngine.rootContext()->setContextProperty(QStringLiteral("hasWebEngine"), webEngineAvailable);
+#else
+    qmlEngine.rootContext()->setContextProperty(QStringLiteral("hasWebEngine"), false);
+#endif
 
     // Load main QML file from resource or local file
     const QUrl url(QStringLiteral("qrc:/qml/App.qml"));
