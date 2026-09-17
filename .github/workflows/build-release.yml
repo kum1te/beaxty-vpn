@@ -51,7 +51,7 @@ jobs:
           version: '6.8.0'
           target: 'desktop'
           arch: 'linux_gcc_64'
-          modules: 'qtshadertools qt5compat qtwebengine'
+          modules: 'qtshadertools qt5compat qtwebengine qtwebchannel qtpositioning'
 
       - name: Build Core Daemon
         run: |
@@ -101,7 +101,7 @@ jobs:
           version: '6.8.0'
           target: 'desktop'
           arch: 'win64_msvc2022_64'
-          modules: 'qtshadertools qt5compat qtwebengine'
+          modules: 'qtshadertools qt5compat qtwebengine qtwebchannel qtpositioning'
 
       - name: Build Core Daemon (Windows)
         shell: bash

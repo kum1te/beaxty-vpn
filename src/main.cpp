@@ -29,9 +29,8 @@
 #include "src/ui/Theme.hpp"
 #include "src/bridge/MainWindowBridge.hpp"
 
-#if __has_include(<QtWebEngineQuick/qtwebenginequickglobal.h>)
+#if defined(BEAXTY_HAS_WEBENGINE)
 #include <QtWebEngineQuick/qtwebenginequickglobal.h>
-#define BEAXTY_HAS_WEBENGINE 1
 #endif
 
 #include <QActionGroup>
@@ -155,14 +154,16 @@ static void setupUnixSignalHandlers(QObject *parent) {
 
 int main(int argc, char *argv[]) {
 #if defined(BEAXTY_HAS_WEBENGINE)
-    // In AppImage and unprivileged container environments, Chromium sandbox without SUID helper fails.
+#if !defined(_WIN32)
+    // В AppImage и контейнерах песочница Chromium без SUID-хелпера падает
     if (qEnvironmentVariableIsSet("APPIMAGE") || qEnvironmentVariableIsSet("container")) {
         QByteArray existingFlags = qgetenv("QTWEBENGINE_CHROMIUM_FLAGS");
         if (!existingFlags.contains("--no-sandbox")) {
-            QByteArray newFlags = existingFlags.isEmpty() ? "--no-sandbox" : (existingFlags + " --no-sandbox");
+            QByteArray newFlags = existingFlags.isEmpty() ? QByteArray("--no-sandbox") : (existingFlags + " --no-sandbox");
             qputenv("QTWEBENGINE_CHROMIUM_FLAGS", newFlags);
         }
     }
+#endif
     QtWebEngineQuick::initialize();
 #endif
 #if defined(_WIN32)
@@ -178,7 +179,7 @@ int main(int argc, char *argv[]) {
 #endif
     app.setApplicationName(QStringLiteral("beaxty VPN"));
     app.setOrganizationName(QStringLiteral("Beaxty"));
-    app.setApplicationVersion(QStringLiteral("1.0.5"));
+    app.setApplicationVersion(QStringLiteral("1.0.6"));
     app.setWindowIcon(QIcon(QStringLiteral(":/icons/app_icon.svg")));
 
     QCommandLineParser parser;

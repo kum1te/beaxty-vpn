@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.20)
 
-project(BeaxtyVPN VERSION 1.0.5 LANGUAGES C CXX)
+project(BeaxtyVPN VERSION 1.0.6 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -16,7 +16,7 @@ if (UNIX AND NOT APPLE)
 endif ()
 
 find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets Qml Quick QuickControls2 Network ${QT_DBUS_COMPONENT})
-find_package(Qt6 OPTIONAL_COMPONENTS WebEngineQuick)
+find_package(Qt6 OPTIONAL_COMPONENTS WebEngineQuick WebChannel Positioning)
 find_package(Threads REQUIRED)
 
 set(THRONE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/3rdparty/throne)
@@ -51,8 +51,8 @@ elseif (APPLE)
     set(MACOSX_BUNDLE_BUNDLE_NAME "BeaxtyVPN")
     set(MACOSX_BUNDLE_GUI_IDENTIFIER "com.beaxty.vpn")
     set(MACOSX_BUNDLE_ICON_FILE "Throne.icns")
-    set(MACOSX_BUNDLE_SHORT_VERSION_STRING "1.0.5")
-    set(MACOSX_BUNDLE_BUNDLE_VERSION "1.0.5")
+    set(MACOSX_BUNDLE_SHORT_VERSION_STRING "1.0.6")
+    set(MACOSX_BUNDLE_BUNDLE_VERSION "1.0.6")
 else ()
     set(PLATFORM_SOURCES
         ${THRONE_DIR}/src/sys/linux/LinuxCap.cpp
@@ -65,7 +65,7 @@ else ()
 endif ()
 
 # Generate NkrVersion.h required by Throne headers
-set(NKR_VERSION "1.0.5.0")
+set(NKR_VERSION "1.0.6.0")
 configure_file("${THRONE_DIR}/cmake/NkrVersion.h.in" "${CMAKE_CURRENT_BINARY_DIR}/NkrVersion.h" @ONLY)
 
 # Protobuf support via Throne's simple-protobuf
@@ -321,8 +321,8 @@ if (APPLE)
         OUTPUT_NAME "BeaxtyVPN"
         MACOSX_BUNDLE_BUNDLE_NAME "BeaxtyVPN"
         MACOSX_BUNDLE_GUI_IDENTIFIER "com.beaxty.vpn"
-        MACOSX_BUNDLE_SHORT_VERSION_STRING "1.0.5"
-        MACOSX_BUNDLE_BUNDLE_VERSION "1.0.5"
+        MACOSX_BUNDLE_SHORT_VERSION_STRING "1.0.6"
+        MACOSX_BUNDLE_BUNDLE_VERSION "1.0.6"
     )
 endif ()
 
