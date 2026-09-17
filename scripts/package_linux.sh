@@ -119,6 +119,14 @@ elif command -v qmake &>/dev/null; then
     export QMAKE="$(command -v qmake)"
 fi
 
+QT_LIBS_DIR="$("${QMAKE}" -query QT_INSTALL_LIBS)"
+QT_PLUGINS_DIR="$("${QMAKE}" -query QT_INSTALL_PLUGINS)"
+QT_QML_DIR="$("${QMAKE}" -query QT_INSTALL_QML)"
+
+echo "==> Deploying all Qt6 shared libraries from ${QT_LIBS_DIR}..."
+mkdir -p "${APPDIR}/usr/lib"
+cp -a "${QT_LIBS_DIR}"/libQt6*.so* "${APPDIR}/usr/lib/" 2>/dev/null || true
+
 "${TOOLS_DIR}/linuxdeploy" \
     --appdir "${APPDIR}" \
     --executable "${APPDIR}/usr/bin/beaxty-vpn" \
@@ -127,9 +135,6 @@ fi
     --plugin qt || true
 
 # Explicitly deploy Qt Plugins and QML modules to guarantee complete autonomous runtime
-QT_PLUGINS_DIR="$("${QMAKE}" -query QT_INSTALL_PLUGINS)"
-QT_QML_DIR="$("${QMAKE}" -query QT_INSTALL_QML)"
-
 echo "==> Deploying Qt plugins from ${QT_PLUGINS_DIR}..."
 mkdir -p "${APPDIR}/usr/plugins"
 cp -r "${QT_PLUGINS_DIR}/platforms" "${APPDIR}/usr/plugins/"
@@ -144,14 +149,18 @@ echo "==> Deploying QML modules from ${QT_QML_DIR}..."
 mkdir -p "${APPDIR}/usr/qml"
 cp -r "${QT_QML_DIR}/"* "${APPDIR}/usr/qml/"
 
-echo "==> Collecting dependencies for platform plugins..."
+echo "==> Resolving deep dependencies for plugins and QML modules..."
 for plugin in "${APPDIR}/usr/plugins/platforms/"*.so; do
     if [ -f "${plugin}" ]; then
         "${TOOLS_DIR}/linuxdeploy" --appdir "${APPDIR}" --deploy-deps-only "${plugin}" 2>/dev/null || true
     fi
 done
-# Удалить случайно скопированные .so из usr/bin
-rm -f "${APPDIR}/usr/bin/"*.so 2>/dev/null || true
+"${TOOLS_DIR}/linuxdeploy" --appdir "${APPDIR}" \
+    --deploy-deps-only "${APPDIR}/usr/plugins" \
+    --deploy-deps-only "${APPDIR}/usr/qml" \
+    --deploy-deps-only "${APPDIR}/usr/lib" 2>/dev/null || true
+# Remove any accidental .so copied into usr/bin
+rm -f "${APPDIR}/usr/bin/"*.so* 2>/dev/null || true
 
 echo "==> Creating qt.conf..."
 cat << 'QTCONF' > "${APPDIR}/usr/bin/qt.conf"
@@ -260,6 +269,38 @@ if ! file "${APPDIR}/usr/bin/beaxty-vpn" | grep -q "ELF"; then
     echo "ERROR: ${APPDIR}/usr/bin/beaxty-vpn is NOT an ELF binary!" >&2
     exit 1
 fi
+
+echo "============================================================"
+echo "==> Verifying complete dependency closure in AppDir..."
+echo "============================================================"
+FAIL_VERIFY=0
+ERRORS=()
+while IFS= read -r elf_file; do
+    if file "${elf_file}" | grep -q "ELF"; then
+        ldd_out=$(LD_LIBRARY_PATH="${APPDIR}/usr/lib:${APPDIR}/usr/lib/x86_64-linux-gnu" ldd "${elf_file}" 2>&1 || true)
+        
+        # 1. Check for missing dependencies
+        if echo "${ldd_out}" | grep -q "not found"; then
+            ERRORS+=("Missing dependency in ${elf_file}: $(echo "${ldd_out}" | grep "not found")")
+            FAIL_VERIFY=1
+        fi
+        
+        # 2. Check for host Qt leakage (must never resolve to host /usr/lib or /lib for libQt6)
+        if echo "${ldd_out}" | grep -E "=> /(usr/)?lib/(x86_64-linux-gnu/)?libQt6" | grep -v "${APPDIR}"; then
+            ERRORS+=("Host Qt library leak in ${elf_file}: $(echo "${ldd_out}" | grep -E "=> /(usr/)?lib/(x86_64-linux-gnu/)?libQt6" | grep -v "${APPDIR}")")
+            FAIL_VERIFY=1
+        fi
+    fi
+done < <(find "${APPDIR}/usr" -type f)
+if [ "${FAIL_VERIFY}" -ne 0 ]; then
+    echo "FATAL: Pre-package dependency closure verification FAILED!" >&2
+    for err in "${ERRORS[@]}"; do
+        echo "  - ${err}" >&2
+    done
+    exit 1
+fi
+echo "==> Dependency verification PASSED! Zero missing libraries and zero host Qt leaks."
+echo "============================================================"
 
 # 7. Package Linux Portable Tarball
 echo "==> Creating BeaxtyVPN-Linux-x86_64-Portable.tar.gz..."

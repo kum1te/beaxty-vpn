@@ -40,7 +40,7 @@ jobs:
             libdbus-1-dev libpulse-dev libasound2-dev \
             libx11-xcb-dev libfontconfig1-dev libfreetype6-dev \
             librsvg2-bin protobuf-compiler libprotobuf-dev \
-            libfuse2 file \
+            libfuse2 file xvfb \
             libnss3-dev libnspr4-dev libdrm-dev libgbm-dev \
             libxcomposite-dev libxdamage-dev libxrandr-dev \
             libxtst-dev libxcursor-dev libxi-dev \
@@ -63,6 +63,15 @@ jobs:
         run: |
           chmod +x scripts/package_linux.sh
           ./scripts/package_linux.sh
+
+      - name: Test Run AppImage in Headless Environment
+        run: |
+          chmod +x dist/BeaxtyVPN-Linux-x86_64.AppImage
+          export APPIMAGE_EXTRACT_AND_RUN=1
+          export QT_QPA_PLATFORM=xcb
+          # If QML fails to load, beaxty-vpn prints 'Fatal: Failed to load QML interface.' and exits with 255.
+          # If all QML modules and plugins load cleanly, it exits with 0 after 2000ms.
+          xvfb-run --auto-servernum -s "-screen 0 1920x1080x24" ./dist/BeaxtyVPN-Linux-x86_64.AppImage --exit-after 2000
 
       - name: Upload Linux Artifacts
         uses: actions/upload-artifact@v4
