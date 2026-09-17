@@ -67,6 +67,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: linux-artifacts
+          retention-days: 1
           path: |
             dist/BeaxtyVPN-Linux-x86_64.AppImage
             dist/BeaxtyVPN-Linux-x86_64-Portable.tar.gz
@@ -161,6 +162,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: windows-artifacts
+          retention-days: 1
           path: dist/BeaxtyVPN-Windows-x86_64-Portable.zip
           if-no-files-found: error
 
@@ -244,6 +246,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: macos-artifacts
+          retention-days: 1
           path: dist/BeaxtyVPN-macOS-Universal.dmg
           if-no-files-found: error
 
