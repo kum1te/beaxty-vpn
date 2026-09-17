@@ -126,6 +126,39 @@ fi
     "${ICON_OPT[@]}" \
     --plugin qt || true
 
+# Explicitly deploy Qt Plugins and QML modules to guarantee complete autonomous runtime
+QT_PLUGINS_DIR="$("${QMAKE}" -query QT_INSTALL_PLUGINS)"
+QT_QML_DIR="$("${QMAKE}" -query QT_INSTALL_QML)"
+
+echo "==> Deploying Qt plugins from ${QT_PLUGINS_DIR}..."
+mkdir -p "${APPDIR}/usr/plugins"
+cp -r "${QT_PLUGINS_DIR}/platforms" "${APPDIR}/usr/plugins/"
+cp -r "${QT_PLUGINS_DIR}/tls" "${APPDIR}/usr/plugins/" 2>/dev/null || true
+cp -r "${QT_PLUGINS_DIR}/imageformats" "${APPDIR}/usr/plugins/" 2>/dev/null || true
+cp -r "${QT_PLUGINS_DIR}/networkinformation" "${APPDIR}/usr/plugins/" 2>/dev/null || true
+if ls "${QT_PLUGINS_DIR}"/wayland-* 1> /dev/null 2>&1; then
+    cp -r "${QT_PLUGINS_DIR}"/wayland-* "${APPDIR}/usr/plugins/" 2>/dev/null || true
+fi
+
+echo "==> Deploying QML modules from ${QT_QML_DIR}..."
+mkdir -p "${APPDIR}/usr/qml"
+cp -r "${QT_QML_DIR}/"* "${APPDIR}/usr/qml/"
+
+echo "==> Collecting dependencies for platform plugins..."
+for plugin in "${APPDIR}/usr/plugins/platforms/"*.so; do
+    [ -f "${plugin}" ] && "${TOOLS_DIR}/linuxdeploy" --appdir "${APPDIR}" -e "${plugin}" || true
+done
+
+echo "==> Creating qt.conf..."
+cat << 'QTCONF' > "${APPDIR}/usr/bin/qt.conf"
+[Paths]
+Prefix = ..
+Plugins = plugins
+Imports = qml
+Qml2Imports = qml
+QTCONF
+cp -p "${APPDIR}/usr/bin/qt.conf" "${APPDIR}/qt.conf"
+
 # Ensure QtWebEngineProcess and resources are copied if built with WebEngine
 QT_LIB_DIR="$(dirname "$("${QMAKE}" -query QT_INSTALL_LIBS)")/lib"
 QT_LIBEXEC_DIR="$("${QMAKE}" -query QT_INSTALL_LIBEXECS)"
@@ -174,8 +207,12 @@ fi
 # Libraries and Qt paths
 export LD_LIBRARY_PATH="${HERE}/usr/lib:${HERE}/usr/lib/x86_64-linux-gnu:${LD_LIBRARY_PATH:-}"
 export QT_PLUGIN_PATH="${HERE}/usr/plugins"
+export QT_QPA_PLATFORM_PLUGIN_PATH="${HERE}/usr/plugins/platforms"
 export QML_IMPORT_PATH="${HERE}/usr/qml"
 export QML2_IMPORT_PATH="${HERE}/usr/qml"
+if [ -z "${QT_QPA_PLATFORM:-}" ]; then
+    export QT_QPA_PLATFORM="wayland;xcb"
+fi
 export QTWEBENGINEPROCESS_PATH="${HERE}/usr/libexec/QtWebEngineProcess"
 export QTWEBENGINE_RESOURCES_PATH="${HERE}/usr/resources"
 
@@ -199,8 +236,12 @@ fi
 
 export LD_LIBRARY_PATH="${HERE}/usr/lib:${HERE}/usr/lib/x86_64-linux-gnu:${LD_LIBRARY_PATH:-}"
 export QT_PLUGIN_PATH="${HERE}/usr/plugins"
+export QT_QPA_PLATFORM_PLUGIN_PATH="${HERE}/usr/plugins/platforms"
 export QML_IMPORT_PATH="${HERE}/usr/qml"
 export QML2_IMPORT_PATH="${HERE}/usr/qml"
+if [ -z "${QT_QPA_PLATFORM:-}" ]; then
+    export QT_QPA_PLATFORM="wayland;xcb"
+fi
 export QTWEBENGINEPROCESS_PATH="${HERE}/usr/libexec/QtWebEngineProcess"
 export QTWEBENGINE_RESOURCES_PATH="${HERE}/usr/resources"
 

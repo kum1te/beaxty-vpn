@@ -43,7 +43,8 @@ jobs:
             libfuse2 file \
             libnss3-dev libnspr4-dev libdrm-dev libgbm-dev \
             libxcomposite-dev libxdamage-dev libxrandr-dev \
-            libxtst-dev libxcursor-dev libxi-dev
+            libxtst-dev libxcursor-dev libxi-dev \
+            libxcb-cursor-dev libxcb-cursor0 libwayland-dev
 
       - name: Install Qt 6.8
         uses: jurplel/install-qt-action@v4
@@ -275,4 +276,5 @@ jobs:
           files: release-files/*
           draft: false
           prerelease: false
+          fail_on_unmatched_files: false
           generate_release_notes: true

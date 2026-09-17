@@ -729,7 +729,7 @@ Item {
                             spacing: 3
 
                             Text {
-                                text: "beaxty VPN v1.0.6"
+                                text: "beaxty VPN v1.0.7"
                                 color: Theme.textPrimary
                                 font.pixelSize: 14
                                 font.bold: true
