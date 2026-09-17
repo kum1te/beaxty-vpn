@@ -270,11 +270,11 @@ jobs:
           ls -la
 
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ github.event.inputs.release_tag || github.ref_name }}
-          files: release-files/*
-          draft: false
-          prerelease: false
-          fail_on_unmatched_files: false
-          generate_release_notes: true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${{ github.event.inputs.release_tag || github.ref_name }}"
+          gh release delete "$TAG" --yes 2>/dev/null || true
+          gh release create "$TAG" release-files/* \
+            --title "Beaxty VPN $TAG" \
+            --generate-notes

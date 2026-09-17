@@ -146,8 +146,12 @@ cp -r "${QT_QML_DIR}/"* "${APPDIR}/usr/qml/"
 
 echo "==> Collecting dependencies for platform plugins..."
 for plugin in "${APPDIR}/usr/plugins/platforms/"*.so; do
-    [ -f "${plugin}" ] && "${TOOLS_DIR}/linuxdeploy" --appdir "${APPDIR}" -e "${plugin}" || true
+    if [ -f "${plugin}" ]; then
+        "${TOOLS_DIR}/linuxdeploy" --appdir "${APPDIR}" --deploy-deps-only "${plugin}" 2>/dev/null || true
+    fi
 done
+# Удалить случайно скопированные .so из usr/bin
+rm -f "${APPDIR}/usr/bin/"*.so 2>/dev/null || true
 
 echo "==> Creating qt.conf..."
 cat << 'QTCONF' > "${APPDIR}/usr/bin/qt.conf"
@@ -185,25 +189,24 @@ if [ -d "${QT_TRANS_DIR}/qtwebengine_locales" ]; then
     cp -p "${QT_TRANS_DIR}/qtwebengine_locales/"*.pak "${APPDIR}/usr/translations/qtwebengine_locales/" 2>/dev/null || true
 fi
 
-# 6. Create custom AppRun and run.sh launcher with fontconfig and WebEngine support
-echo "==> Creating custom AppRun and run.sh with system font & WebEngine environment..."
+# 6. Ensure original ELF binary is intact and create custom AppRun and run.sh launchers
+echo "==> Restoring original binary and creating custom AppRun and run.sh..."
+cp -f "${BUILD_DIR}/beaxty-vpn" "${APPDIR}/usr/bin/beaxty-vpn"
+chmod +x "${APPDIR}/usr/bin/beaxty-vpn"
+
+rm -f "${APPDIR}/AppRun"
 cat << 'LAUNCHER' > "${APPDIR}/AppRun"
 #!/usr/bin/env bash
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 export APPDIR="${HERE}"
-
-# System Fontconfig fallback so AppImage uses host fonts (Noto Color Emoji, system sans, etc.)
-if [ -z "${FONTCONFIG_PATH:-}" ]; then
-    if [ -d "/etc/fonts" ]; then
-        export FONTCONFIG_PATH="/etc/fonts"
-    fi
+# System Fontconfig fallback
+if [ -z "${FONTCONFIG_PATH:-}" ] && [ -d "/etc/fonts" ]; then
+    export FONTCONFIG_PATH="/etc/fonts"
 fi
-
-# Chromium sandbox does not work unprivileged without SUID helper inside AppImage
+# Chromium sandbox flags
 if [ -z "${QTWEBENGINE_CHROMIUM_FLAGS:-}" ]; then
     export QTWEBENGINE_CHROMIUM_FLAGS="--no-sandbox"
 fi
-
 # Libraries and Qt paths
 export LD_LIBRARY_PATH="${HERE}/usr/lib:${HERE}/usr/lib/x86_64-linux-gnu:${LD_LIBRARY_PATH:-}"
 export QT_PLUGIN_PATH="${HERE}/usr/plugins"
@@ -215,7 +218,6 @@ if [ -z "${QT_QPA_PLATFORM:-}" ]; then
 fi
 export QTWEBENGINEPROCESS_PATH="${HERE}/usr/libexec/QtWebEngineProcess"
 export QTWEBENGINE_RESOURCES_PATH="${HERE}/usr/resources"
-
 exec "${HERE}/usr/bin/beaxty-vpn" "$@"
 LAUNCHER
 chmod +x "${APPDIR}/AppRun"
@@ -248,6 +250,16 @@ export QTWEBENGINE_RESOURCES_PATH="${HERE}/usr/resources"
 exec "${HERE}/usr/bin/beaxty-vpn" "$@"
 LAUNCHER
 chmod +x "${APPDIR}/run.sh"
+
+# Sanity checks before packaging
+if [ -L "${APPDIR}/AppRun" ]; then
+    echo "ERROR: AppRun is a symlink! Must be a script." >&2
+    exit 1
+fi
+if ! file "${APPDIR}/usr/bin/beaxty-vpn" | grep -q "ELF"; then
+    echo "ERROR: ${APPDIR}/usr/bin/beaxty-vpn is NOT an ELF binary!" >&2
+    exit 1
+fi
 
 # 7. Package Linux Portable Tarball
 echo "==> Creating BeaxtyVPN-Linux-x86_64-Portable.tar.gz..."
