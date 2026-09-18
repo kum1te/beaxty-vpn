@@ -22,13 +22,19 @@ jobs:
     permissions:
       contents: write
     steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
       - name: Ensure Release Exists
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           TAG="${{ github.event.inputs.release_tag || github.ref_name }}"
-          if ! gh release view "$TAG" &>/dev/null; then
-            gh release create "$TAG" --title "Beaxty VPN $TAG" --generate-notes
+          if ! gh release view "$TAG" --repo "${{ github.repository }}" &>/dev/null; then
+            gh release create "$TAG" \
+              --repo "${{ github.repository }}" \
+              --title "Beaxty VPN $TAG" \
+              --generate-notes
           fi
 
   build-linux:
@@ -98,6 +104,7 @@ jobs:
         run: |
           TAG="${{ github.event.inputs.release_tag || github.ref_name }}"
           gh release upload "$TAG" \
+            --repo "${{ github.repository }}" \
             dist/BeaxtyVPN-Linux-x86_64.AppImage \
             dist/BeaxtyVPN-Linux-x86_64-Portable.tar.gz \
             --clobber
@@ -195,7 +202,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           $TAG = if ("${{ github.event.inputs.release_tag }}") { "${{ github.event.inputs.release_tag }}" } else { "${{ github.ref_name }}" }
-          gh release upload $TAG dist/BeaxtyVPN-Windows-x86_64-Portable.zip --clobber
+          gh release upload $TAG --repo "${{ github.repository }}" dist/BeaxtyVPN-Windows-x86_64-Portable.zip --clobber
 
   build-macos:
     name: macOS (DMG)
@@ -280,4 +287,4 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           TAG="${{ github.event.inputs.release_tag || github.ref_name }}"
-          gh release upload "$TAG" dist/BeaxtyVPN-macOS-Universal.dmg --clobber
+          gh release upload "$TAG" --repo "${{ github.repository }}" dist/BeaxtyVPN-macOS-Universal.dmg --clobber
