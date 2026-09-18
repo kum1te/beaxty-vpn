@@ -15,8 +15,25 @@ permissions:
   contents: write
 
 jobs:
+  create-release:
+    name: Initialize GitHub Release
+    if: startsWith(github.ref, 'refs/tags/v') || github.event.inputs.release_tag != ''
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Ensure Release Exists
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${{ github.event.inputs.release_tag || github.ref_name }}"
+          if ! gh release view "$TAG" &>/dev/null; then
+            gh release create "$TAG" --title "Beaxty VPN $TAG" --generate-notes
+          fi
+
   build-linux:
     name: Linux (AppImage & Portable Tarball)
+    needs: [create-release]
     runs-on: ubuntu-22.04
     steps:
       - name: Checkout repository
@@ -40,7 +57,7 @@ jobs:
             libdbus-1-dev libpulse-dev libasound2-dev \
             libx11-xcb-dev libfontconfig1-dev libfreetype6-dev \
             librsvg2-bin protobuf-compiler libprotobuf-dev \
-            libfuse2 file xvfb \
+            libfuse2 file xvfb libgl1-mesa-dri mesa-utils \
             libnss3-dev libnspr4-dev libdrm-dev libgbm-dev \
             libxcomposite-dev libxdamage-dev libxrandr-dev \
             libxtst-dev libxcursor-dev libxi-dev \
@@ -69,22 +86,25 @@ jobs:
           chmod +x dist/BeaxtyVPN-Linux-x86_64.AppImage
           export APPIMAGE_EXTRACT_AND_RUN=1
           export QT_QPA_PLATFORM=xcb
-          # If QML fails to load, beaxty-vpn prints 'Fatal: Failed to load QML interface.' and exits with 255.
-          # If all QML modules and plugins load cleanly, it exits with 0 after 2000ms.
+          export QT_QUICK_BACKEND=software
+          export QT_XCB_GL_INTEGRATION=none
+          export LIBGL_ALWAYS_SOFTWARE=1
           xvfb-run --auto-servernum -s "-screen 0 1920x1080x24" ./dist/BeaxtyVPN-Linux-x86_64.AppImage --exit-after 2000
 
-      - name: Upload Linux Artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: linux-artifacts
-          retention-days: 1
-          path: |
-            dist/BeaxtyVPN-Linux-x86_64.AppImage
-            dist/BeaxtyVPN-Linux-x86_64-Portable.tar.gz
-          if-no-files-found: error
+      - name: Upload Linux Assets to Release
+        if: startsWith(github.ref, 'refs/tags/v') || github.event.inputs.release_tag != ''
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${{ github.event.inputs.release_tag || github.ref_name }}"
+          gh release upload "$TAG" \
+            dist/BeaxtyVPN-Linux-x86_64.AppImage \
+            dist/BeaxtyVPN-Linux-x86_64-Portable.tar.gz \
+            --clobber
 
   build-windows:
     name: Windows Portable (x86_64 ZIP)
+    needs: [create-release]
     runs-on: windows-latest
     steps:
       - name: Checkout repository
@@ -168,16 +188,18 @@ jobs:
           Compress-Archive -Path "$PortableDir\*" -DestinationPath "dist\BeaxtyVPN-Windows-x86_64-Portable.zip" -Force
           Get-ChildItem -Path dist
 
-      - name: Upload Windows Artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: windows-artifacts
-          retention-days: 1
-          path: dist/BeaxtyVPN-Windows-x86_64-Portable.zip
-          if-no-files-found: error
+      - name: Upload Windows Assets to Release
+        if: startsWith(github.ref, 'refs/tags/v') || github.event.inputs.release_tag != ''
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $TAG = if ("${{ github.event.inputs.release_tag }}") { "${{ github.event.inputs.release_tag }}" } else { "${{ github.ref_name }}" }
+          gh release upload $TAG dist/BeaxtyVPN-Windows-x86_64-Portable.zip --clobber
 
   build-macos:
     name: macOS (DMG)
+    needs: [create-release]
     runs-on: macos-14
     steps:
       - name: Checkout repository
@@ -252,38 +274,10 @@ jobs:
           hdiutil create -volname "BeaxtyVPN" -srcfolder "${APP_BUNDLE}" -ov -format UDZO dist/BeaxtyVPN-macOS-Universal.dmg
           ls -lh dist
 
-      - name: Upload macOS Artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: macos-artifacts
-          retention-days: 1
-          path: dist/BeaxtyVPN-macOS-Universal.dmg
-          if-no-files-found: error
-
-  release:
-    name: Publish GitHub Release
-    needs: [build-linux, build-windows, build-macos]
-    if: startsWith(github.ref, 'refs/tags/v') || github.event.inputs.release_tag != ''
-    runs-on: ubuntu-latest
-    steps:
-      - name: Download all workflow artifacts
-        uses: actions/download-artifact@v4
-        with:
-          merge-multiple: true
-          path: release-files
-
-      - name: Generate Checksums
-        run: |
-          cd release-files
-          sha256sum * > SHA256SUMS.txt
-          ls -la
-
-      - name: Create GitHub Release
+      - name: Upload macOS Assets to Release
+        if: startsWith(github.ref, 'refs/tags/v') || github.event.inputs.release_tag != ''
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           TAG="${{ github.event.inputs.release_tag || github.ref_name }}"
-          gh release delete "$TAG" --yes 2>/dev/null || true
-          gh release create "$TAG" release-files/* \
-            --title "Beaxty VPN $TAG" \
-            --generate-notes
+          gh release upload "$TAG" dist/BeaxtyVPN-macOS-Universal.dmg --clobber
