@@ -45,6 +45,7 @@ namespace API {
         std::atomic<bool> connected_{false};
 
         static constexpr int kIOTimeoutMs = 30000;
+        static constexpr quint32 kMaxFrameBytes = 16u * 1024u * 1024u;
 
     public:
         static constexpr int CallOK = 0;
@@ -78,6 +79,13 @@ namespace API {
                     QDataStream ds(read_buf);
                     ds.setByteOrder(QDataStream::LittleEndian);
                     ds >> reqId >> status >> dataLen;
+                }
+
+                if (dataLen > kMaxFrameBytes) {
+                    qWarning() << "IPC response exceeds size limit:" << dataLen;
+                    read_buf.clear();
+                    if (sock) sock->abort();
+                    return;
                 }
 
                 qint64 totalSize = qint64(9) + dataLen;

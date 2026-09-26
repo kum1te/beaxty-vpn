@@ -10,20 +10,27 @@ import (
 	"net"
 	runtimeDebug "runtime/debug"
 	"sync"
+	"time"
 
 	"google.golang.org/protobuf/proto"
 )
 
 var globalServer = &server{}
 
+const (
+	maxIPCMethodBytes  = 256
+	maxIPCPayloadBytes = 16 << 20
+)
+
 // Little-endian frames: req [uint32 reqId][uint16 methodLen][method][uint32 payloadLen][payload], resp [uint32 reqId][uint8 status][uint32 dataLen][data].
 func runDispatch(conn net.Conn) {
 	defer func() {
 		conn.Close()
-		log.Fatal("IPC connection dropped, exiting")
+		log.Printf("IPC connection dropped")
 	}()
 
 	var writeMu sync.Mutex
+	inFlight := make(chan struct{}, 32)
 
 	writeResponse := func(reqId uint32, status uint8, data []byte) {
 		var header [9]byte
@@ -42,6 +49,10 @@ func runDispatch(conn net.Conn) {
 	}
 
 	for {
+		// Do not let a local client hold a dispatch goroutine forever while
+		// sending a partial frame.
+		_ = conn.SetReadDeadline(time.Now().Add(30 * time.Second))
+
 		var reqId uint32
 		if err := binary.Read(conn, binary.LittleEndian, &reqId); err != nil {
 			return
@@ -49,6 +60,10 @@ func runDispatch(conn net.Conn) {
 
 		var methodLen uint16
 		if err := binary.Read(conn, binary.LittleEndian, &methodLen); err != nil {
+			return
+		}
+		if methodLen == 0 || int(methodLen) > maxIPCMethodBytes {
+			log.Printf("IPC request has invalid method length %d", methodLen)
 			return
 		}
 
@@ -61,13 +76,25 @@ func runDispatch(conn net.Conn) {
 		if err := binary.Read(conn, binary.LittleEndian, &payloadLen); err != nil {
 			return
 		}
+		if payloadLen > maxIPCPayloadBytes {
+			log.Printf("IPC request %d exceeds payload limit: %d bytes", reqId, payloadLen)
+			return
+		}
 
 		payload := make([]byte, payloadLen)
 		if _, err := io.ReadFull(conn, payload); err != nil {
 			return
 		}
 
+		select {
+		case inFlight <- struct{}{}:
+		default:
+			writeResponse(reqId, 1, []byte("too many concurrent IPC requests"))
+			continue
+		}
+
 		go func(id uint32, method string, pl []byte) {
+			defer func() { <-inFlight }()
 			// main()'s recover covers only the main goroutine, so without this one bad request takes the core down.
 			defer func() {
 				if r := recover(); r != nil {
