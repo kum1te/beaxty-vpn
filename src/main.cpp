@@ -15,6 +15,7 @@
 #include <QCommandLineParser>
 #include <QTimer>
 #include <QLockFile>
+#include <memory>
 
 #include "src/core/DeepLinkManager.hpp"
 #include "src/core/ThroneEngine.hpp"
@@ -200,6 +201,10 @@ int main(int argc, char *argv[]) {
                                       QStringLiteral("Seed sample nodes when the database is empty (UI testing)"));
     parser.addOption(demoDataOption);
 
+    QCommandLineOption trayOption(QStringLiteral("tray"),
+                                  QStringLiteral("Start minimized to the system tray"));
+    parser.addOption(trayOption);
+
     parser.addPositionalArgument(QStringLiteral("url"), QStringLiteral("Optional deep link URL (beaxty://...)"));
 
     parser.process(app);
@@ -247,7 +252,9 @@ int main(int argc, char *argv[]) {
     // Core Managers & Facades
     DeepLinkManager deepLinkManager;
     ThroneEngine engine;
-    DeviceIdentity deviceIdentity;
+    // DeviceIdentity reads and seeds settings, so it must be constructed only
+    // after ThroneEngine has opened the database below.
+    std::unique_ptr<DeviceIdentity> deviceIdentity;
     RoutingManager routingManager;
     ConfigAdapter configAdapter;
     TrafficMonitor trafficMonitor;
@@ -300,6 +307,7 @@ int main(int argc, char *argv[]) {
     // Initialize database, settings, routes, and core daemon
     QString customDb = parser.value(dbOption);
     engine.initialize(customDb);
+    deviceIdentity = std::make_unique<DeviceIdentity>();
     routingManager.initializeRouteProfiles();
     configAdapter.setDemoDataEnabled(parser.isSet(demoDataOption) || ConfigAdapter::demoDataRequestedFromEnv());
     configAdapter.reloadServers();
@@ -319,7 +327,7 @@ int main(int argc, char *argv[]) {
     qmlEngine.rootContext()->setContextProperty(QStringLiteral("toastManager"), &toastManager);
     qmlEngine.rootContext()->setContextProperty(QStringLiteral("throneEngine"), &engine);
     qmlEngine.rootContext()->setContextProperty(QStringLiteral("configAdapter"), &configAdapter);
-    qmlEngine.rootContext()->setContextProperty(QStringLiteral("deviceIdentity"), &deviceIdentity);
+    qmlEngine.rootContext()->setContextProperty(QStringLiteral("deviceIdentity"), deviceIdentity.get());
     qmlEngine.rootContext()->setContextProperty(QStringLiteral("routingManager"), &routingManager);
     qmlEngine.rootContext()->setContextProperty(QStringLiteral("trafficMonitor"), &trafficMonitor);
     locManager.initialize(&qmlEngine);
@@ -373,6 +381,9 @@ int main(int argc, char *argv[]) {
     QQuickWindow *mainWindow = nullptr;
     if (!qmlEngine.rootObjects().isEmpty()) {
         mainWindow = qobject_cast<QQuickWindow *>(qmlEngine.rootObjects().constFirst());
+    }
+    if (parser.isSet(trayOption) && mainWindow) {
+        mainWindow->hide();
     }
 
     auto showMainWindow = [&mainWindow]() {

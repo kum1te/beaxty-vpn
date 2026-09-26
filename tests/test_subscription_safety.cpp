@@ -30,6 +30,7 @@ static bool waitUntil(const std::function<bool()> &done) {
 
 int main(int argc, char **argv) {
     qputenv("QT_QPA_PLATFORM", "offscreen");
+    qputenv("BEAXTY_ALLOW_LOCAL_TEST_REQUESTS", "1");
     QApplication app(argc, argv);
     QTemporaryDir dir;
     UI_InitMainWindow();

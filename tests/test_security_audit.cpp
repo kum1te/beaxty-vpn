@@ -56,6 +56,16 @@ int main(int argc, char *argv[]) {
                 "SSRF: Multicast address was NOT blocked");
         require(!NetworkRequestHelper::IsSafePublicUrl(QUrl("http://0.0.0.0/test")),
                 "SSRF: 0.0.0.0 was NOT blocked");
+        require(!NetworkRequestHelper::IsSafePublicUrl(QUrl("http://10.0.0.1/")),
+                "SSRF: RFC1918 10/8 address was NOT blocked");
+        require(!NetworkRequestHelper::IsSafePublicUrl(QUrl("http://172.16.0.1/")),
+                "SSRF: RFC1918 172.16/12 address was NOT blocked");
+        require(!NetworkRequestHelper::IsSafePublicUrl(QUrl("http://192.168.1.1/")),
+                "SSRF: RFC1918 192.168/16 address was NOT blocked");
+        require(!NetworkRequestHelper::IsSafePublicUrl(QUrl("http://[fc00::1]/")),
+                "SSRF: IPv6 ULA address was NOT blocked");
+        require(!NetworkRequestHelper::IsSafePublicUrl(QUrl("http://localhost./")),
+                "SSRF: dotted localhost hostname was NOT blocked");
 
         // Non-http schemes MUST be blocked
         require(!NetworkRequestHelper::IsSafePublicUrl(QUrl("file:///etc/passwd")),

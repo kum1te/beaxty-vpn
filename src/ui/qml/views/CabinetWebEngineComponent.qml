@@ -32,18 +32,38 @@ WebEngineView {
     }
 
     onAuthenticationDialogRequested: function(request) {
-        request.dialogAccept();
+        request.accepted = true;
+        request.dialogReject();
     }
 
     function parseUrlParts(urlStr) {
         var str = urlStr ? urlStr.toString() : "";
         var match = str.match(/^([a-zA-Z][a-zA-Z0-9+.-]*):\/\/([^\/\?#]+)/);
         if (match) {
-            var hostWithPort = match[2].toLowerCase();
-            var hostOnly = hostWithPort.split(":")[0];
+            var authority = match[2].toLowerCase();
+            // Strip userinfo before parsing the host. Otherwise
+            // https://cabinet.beaxty.com:443@untrusted.example/ would be
+            // mistaken for a trusted cabinet origin.
+            var at = authority.lastIndexOf("@");
+            if (at >= 0) authority = authority.substring(at + 1);
+            var hostOnly = authority;
+            if (hostOnly.charAt(0) === "[") {
+                var closing = hostOnly.indexOf("]");
+                if (closing >= 0) hostOnly = hostOnly.substring(1, closing);
+            } else {
+                var colon = hostOnly.lastIndexOf(":");
+                if (colon >= 0 && hostOnly.substring(colon + 1).match(/^\d*$/)) {
+                    hostOnly = hostOnly.substring(0, colon);
+                }
+            }
             return { scheme: match[1].toLowerCase(), host: hostOnly };
         }
         return { scheme: "", host: "" };
+    }
+
+    function isAllowedExternalUrl(urlStr) {
+        var scheme = parseUrlParts(urlStr).scheme;
+        return scheme === "https" || scheme === "http";
     }
 
     // Intercept navigation requests to enforce Strict Whitelist
@@ -71,7 +91,7 @@ WebEngineView {
             if (typeof request.reject === "function") request.reject();
             else request.action = WebEngineNavigationRequest.IgnoreRequest;
             console.log("[CabinetWebEngine] External URL redirected to system browser:", reqUrl);
-            webView.externalUrlTriggered(reqUrl);
+            if (isAllowedExternalUrl(reqUrl)) webView.externalUrlTriggered(reqUrl);
         }
     }
 
@@ -90,7 +110,7 @@ WebEngineView {
         if (isTrustedHost && parts.scheme === "https") {
             // Open in same view instead of separate window
             webView.url = request.requestedUrl;
-        } else {
+        } else if (isAllowedExternalUrl(reqUrl)) {
             webView.externalUrlTriggered(reqUrl);
         }
     }

@@ -10,12 +10,90 @@
 #include <QMap>
 #include <QStringList>
 #include <QHostAddress>
+#include <QHostInfo>
+#include <QCryptographicHash>
 
 #include "include/global/Configs.hpp"
 #include "include/ui/mainwindow.h"
 #include "include/global/DeviceDetailsHelper.hpp"
 
 namespace Configs_network {
+
+    namespace {
+        bool isPrivateOrSpecialAddress(const QHostAddress &address) {
+            if (address.isNull() || address.isLoopback() || address.isLinkLocal() ||
+                address.isMulticast() || address.isBroadcast()) {
+                return true;
+            }
+
+            if (address.protocol() == QAbstractSocket::IPv4Protocol) {
+                const quint32 ip = address.toIPv4Address();
+                const quint32 a = (ip >> 24) & 0xff;
+                const quint32 b = (ip >> 16) & 0xff;
+                const quint32 c = (ip >> 8) & 0xff;
+                return a == 0 || a == 10 || a == 127 ||
+                       (a == 100 && b >= 64 && b <= 127) ||
+                       (a == 169 && b == 254) ||
+                       (a == 172 && b >= 16 && b <= 31) ||
+                       (a == 192 && (b == 168 || (b == 0 && c == 0) ||
+                                     (b == 0 && c == 2) || (b == 0 && c == 9) ||
+                                     (b == 0 && c == 10))) ||
+                       (a == 198 && ((b == 18) || (b == 19) || b == 51)) ||
+                       (a == 203 && b == 0 && c == 113) ||
+                       a >= 224;
+            }
+
+            const Q_IPV6ADDR v6 = address.toIPv6Address();
+            // fc00::/7 (ULA), plus the unspecified address. Qt's loopback,
+            // link-local and multicast checks above cover the other local ranges.
+            if ((v6[0] & 0xfe) == 0xfc) return true;
+            if (v6[0] == 0 && v6[1] == 0 && v6[2] == 0 && v6[3] == 0 &&
+                v6[4] == 0 && v6[5] == 0 && v6[6] == 0 && v6[7] == 0 &&
+                v6[8] == 0 && v6[9] == 0 && v6[10] == 0 && v6[11] == 0 &&
+                v6[12] == 0 && v6[13] == 0 && v6[14] == 0 && v6[15] == 0) {
+                return true;
+            }
+            // IPv4-mapped addresses must use the same RFC1918 checks.
+            if (v6[0] == 0 && v6[1] == 0 && v6[2] == 0 && v6[3] == 0 &&
+                v6[4] == 0 && v6[5] == 0 && v6[6] == 0 && v6[7] == 0 &&
+                v6[8] == 0 && v6[9] == 0 && v6[10] == 0xff && v6[11] == 0xff) {
+                return isPrivateOrSpecialAddress(QHostAddress((quint32(v6[12]) << 24) |
+                                                               (quint32(v6[13]) << 16) |
+                                                               (quint32(v6[14]) << 8) |
+                                                               quint32(v6[15])));
+            }
+            return false;
+        }
+
+        bool isUnsafeHost(const QString &rawHost, bool allowLoopbackForTests) {
+            QString host = rawHost.trimmed().toLower();
+            while (host.endsWith(QLatin1Char('.'))) host.chop(1);
+            if (host.isEmpty() || host == QStringLiteral("localhost") ||
+                host == QStringLiteral("metadata.google.internal")) {
+                return !allowLoopbackForTests || host != QStringLiteral("localhost");
+            }
+
+            const QHostAddress literal(host);
+            if (!literal.isNull()) {
+                if (literal.isLoopback() && allowLoopbackForTests) return false;
+                return isPrivateOrSpecialAddress(literal);
+            }
+
+            // Resolve hostnames before opening a request. If any answer points to
+            // a local/special range, reject the hostname rather than trusting its
+            // spelling. A failed lookup is left to QNetworkAccessManager.
+            const QHostInfo info = QHostInfo::fromName(host);
+            if (info.error() == QHostInfo::NoError) {
+                for (const QHostAddress &address : info.addresses()) {
+                    if (isPrivateOrSpecialAddress(address) &&
+                        !(allowLoopbackForTests && address.isLoopback())) {
+                        return true;
+                    }
+                }
+            }
+            return false;
+        }
+    }
 
     bool NetworkRequestHelper::IsSafePublicUrl(const QUrl &url) {
         if (!url.isValid()) return false;
@@ -24,29 +102,12 @@ namespace Configs_network {
 
         QString host = url.host().trimmed().toLower();
         if (host.isEmpty()) return false;
-        if (host == QStringLiteral("metadata.google.internal")) return false;
 
         // In test environments (e.g. QPA offscreen or test runner), allow loopback mock test servers
-        bool isTestEnv = qEnvironmentVariableIsSet("BEAXTY_ALLOW_LOCAL_TEST_REQUESTS") ||
-                         (qgetenv("QT_QPA_PLATFORM") == "offscreen");
-
-        if (host == QStringLiteral("localhost")) {
-            if (!isTestEnv) return false;
-        }
-
-        QHostAddress addr(host);
-        if (!addr.isNull()) {
-            if (addr.isLoopback()) {
-                if (!isTestEnv) return false;
-            } else if (addr.isLinkLocal() || addr.isMulticast() || addr.isBroadcast()) {
-                return false;
-            }
-            QString ip = addr.toString();
-            if (ip == QStringLiteral("169.254.169.254") || ip == QStringLiteral("100.100.100.200") || ip == QStringLiteral("0.0.0.0")) {
-                return false;
-            }
-        }
-        return true;
+        // Test builds must opt in explicitly. A headless UI environment is not
+        // a security boundary and must never make localhost requests acceptable.
+        bool isTestEnv = qEnvironmentVariableIsSet("BEAXTY_ALLOW_LOCAL_TEST_REQUESTS");
+        return !isUnsafeHost(host, isTestEnv);
     }
 
     HTTPResponse NetworkRequestHelper::HttpGet(const QString &url, bool sendHwid, bool useProxy, qint64 maxBytes) {
@@ -133,7 +194,14 @@ namespace Configs_network {
                 }
             }
 
-            QString hwid = customParams.contains("hwid") ? customParams["hwid"] : details.hwid;
+            // Never send the raw machine identifier from DeviceDetailsHelper.
+            // The facade stores the same stable, one-way representation in the
+            // database, but hashing here also protects callers that use the
+            // network helper before DeviceIdentity has been constructed.
+            QString hwid = customParams.contains("hwid")
+                               ? customParams["hwid"]
+                               : QString::fromLatin1(QCryptographicHash::hash(
+                                     details.hwid.toUtf8(), QCryptographicHash::Sha256).toHex());
             QString os = customParams.contains("os") ? customParams["os"] : details.os;
             QString osVersion = customParams.contains("osversion") ? customParams["osversion"] : details.osVersion;
             QString model = customParams.contains("model") ? customParams["model"] : details.model;
