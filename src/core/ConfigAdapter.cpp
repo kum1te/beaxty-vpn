@@ -230,12 +230,12 @@ void ConfigAdapter::ensureDefaultDemoServers() {
         isNewGroup = true;
     }
     group->name = QStringLiteral("beaxty VPN 🪽");
-    group->url = QStringLiteral("https://sub.beaxty.com:8443/z-pB5nbBj37wuqQz");
+    group->url = QStringLiteral("https://subscription.example.invalid/demo");
     QString demoAnnounce = QStringLiteral("🔄 Не забывайте обновлять подписку\n⚡ - Сервера с низким пингом\n🏳️ - Если не работает мобильный инетрнет\nБот: @beaxtyvpnbot | Сайт: cabinet.beaxty.com");
     group->info = packGroupInfo(QStringLiteral("upload=0; download=2107669288917; total=0; expire=0"),
                                 demoAnnounce,
                                 QStringLiteral("https://t.me/beaxtysupport"),
-                                QStringLiteral("https://sub.beaxty.com:8443/z-pB5nbBj37wuqQz"));
+                                QStringLiteral("https://subscription.example.invalid/demo"));
     group->sub_last_update = QDateTime::currentSecsSinceEpoch() - 1800;
 
     if (isNewGroup) {
@@ -1122,4 +1122,3 @@ void ConfigAdapter::checkScheduledSubscriptionUpdates() {
         }
     }
 }
-

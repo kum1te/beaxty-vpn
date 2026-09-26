@@ -69,7 +69,7 @@ int main(int argc, char *argv[]) {
     group->name = QStringLiteral("Reality Test Group");
     Configs::dataManager->groupsRepo->AddGroup(group);
 
-    QString vlessLink = QStringLiteral("vless://b831381d-6324-4d53-ad4f-8cda48b30811@104.21.5.12:443?encryption=none&security=reality&sni=yahoo.com&fp=chrome&pbk=wA6f6qS6G7N5h8T2kR4pL0mX1vY3zB9aC7dE5fG2hJ4&sid=1a2b3c4d&type=tcp#FullTunnelRealityNode");
+    QString vlessLink = QStringLiteral("vless://11111111-1111-4111-8111-111111111111@198.51.100.10:443?encryption=none&security=reality&sni=example.invalid&fp=chrome&pbk=test-public-key&sid=1a2b3c4d&type=tcp#FullTunnelRealityNode");
 
     std::shared_ptr<Configs::Profile> profile;
     Subscription::ParseSink sink;

@@ -184,7 +184,7 @@ int main(int argc, char *argv[]) {
     std::cout << "  [4] Verifying Diagnostic Report Credential Redaction..." << std::endl;
     {
         QString sampleLog = 
-            "2026-09-13 [Core] Connecting to vless://a1b2c3d4-5678-90ab-cdef-1234567890ab@remote.com:443?security=reality&pbk=SuperSecretPublicKey123&sid=123456#Server1\n"
+            "2026-09-13 [Core] Connecting to vless://a1b2c3d4-5678-40ab-8def-1234567890ab@example.invalid:443?security=reality&pbk=test-public-key&sid=123456#Server1\n"
             "2026-09-13 [RPC] Auth header Bearer my-secret-jwt-token-xyz with password=UltraSecretPass and secret=TopSecretKey\n"
             "2026-09-13 [WireGuard] Generating peer with private_key=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA= and seed=BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB=";
 

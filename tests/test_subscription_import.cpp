@@ -48,15 +48,15 @@ int main(int argc, char *argv[]) {
     ConfigAdapter adapter;
 
     // 1. Import realistic VLESS link requested by user:
-    QString vlessLink = QStringLiteral("vless://b831381d-6324-4d53-ad4f-8cda48b30811@104.21.5.12:443?encryption=none&security=reality&sni=yahoo.com&fp=chrome&pbk=wA6f6qS6G7N5h8T2kR4pL0mX1vY3zB9aC7dE5fG2hJ4&sid=1a2b3c4d&type=tcp&headerType=none#TestServer");
+    QString vlessLink = QStringLiteral("vless://11111111-1111-4111-8111-111111111111@198.51.100.10:443?encryption=none&security=reality&sni=example.invalid&fp=chrome&pbk=test-public-key&sid=1a2b3c4d&type=tcp&headerType=none#TestServer");
     std::cout << "\n[1] Importing VLESS link..." << std::endl;
     adapter.importSubscription(vlessLink, QStringLiteral("VLESS-Custom-Group"));
 
     // 2. Import Base64 subscription
     // Raw contents: two VLESS nodes encoded in Base64
     QString rawSub = QStringLiteral(
-        "vless://a1b2c3d4-0000-0000-0000-000000000001@1.1.1.1:443?encryption=none&security=tls&sni=cloudflare.com&type=tcp#Node-Alpha\n"
-        "vless://a1b2c3d4-0000-0000-0000-000000000002@1.0.0.1:443?encryption=none&security=tls&sni=cloudflare.com&type=tcp#Node-Beta\n"
+        "vless://a1b2c3d4-0000-4000-8000-000000000001@198.51.100.41:443?encryption=none&security=tls&sni=example.invalid&type=tcp#Node-Alpha\n"
+        "vless://a1b2c3d4-0000-4000-8000-000000000002@198.51.100.42:443?encryption=none&security=tls&sni=example.invalid&type=tcp#Node-Beta\n"
     );
     QString base64Sub = QString::fromLatin1(rawSub.toUtf8().toBase64());
     std::cout << "\n[2] Importing Base64 subscription (" << base64Sub.length() << " chars)..." << std::endl;
@@ -322,7 +322,7 @@ int main(int argc, char *argv[]) {
         grp3->name = QStringLiteral("beaxty VPN 🪽");
         QString testAnnounce = QStringLiteral("🔄 Не забывайте обновлять подписку\n⚡ - Сервера с низким пингом\n🏳️ - Если не работает мобильный интернет\nБот: @beaxtyvpnbot | Сайт: cabinet.beaxty.com");
         QString testAnnounceB64 = QString::fromLatin1(testAnnounce.toUtf8().toBase64());
-        grp3->info = QStringLiteral("upload=0; download=2107669288917; total=0; expire=0; announce_b64=%1; support=https://t.me/beaxtysupport; web=https://sub.beaxty.com:8443/z-pB5nbBj37wuqQz")
+        grp3->info = QStringLiteral("upload=0; download=2107669288917; total=0; expire=0; announce_b64=%1; support=https://t.me/example_support; web=https://subscription.example.invalid/demo")
                      .arg(testAnnounceB64);
         Configs::dataManager->groupsRepo->Save(grp3);
 
@@ -347,11 +347,11 @@ int main(int argc, char *argv[]) {
                     std::cerr << "FAILED: Announcement missing expected text!" << std::endl;
                     return 1;
                 }
-                if (gm["supportUrl"].toString() != QStringLiteral("https://t.me/beaxtysupport")) {
+                if (gm["supportUrl"].toString() != QStringLiteral("https://t.me/example_support")) {
                     std::cerr << "FAILED: Incorrect supportUrl!" << std::endl;
                     return 1;
                 }
-                if (gm["webUrl"].toString() != QStringLiteral("https://sub.beaxty.com:8443/z-pB5nbBj37wuqQz")) {
+                if (gm["webUrl"].toString() != QStringLiteral("https://subscription.example.invalid/demo")) {
                     std::cerr << "FAILED: Incorrect webUrl!" << std::endl;
                     return 1;
                 }

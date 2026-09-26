@@ -40,7 +40,7 @@ int main(int argc, char **argv) {
     AppPrefs::setInt("auto_update_subs_mode", 0);
     AppPrefs::setInt("server_sort_mode", 2);
     adapter.reloadServers();
-    const QString node = "vless://a1b2c3d4-0000-0000-0000-000000000001@1.1.1.1:443?security=tls&sni=example.com&type=tcp#Alpha";
+    const QString node = "vless://a1b2c3d4-0000-4000-8000-000000000001@198.51.100.40:443?security=tls&sni=example.invalid&type=tcp#Alpha";
     try {
         require(adapter.autoUpdateSubsMode() == 0 && adapter.serverSortMode() == 2,
                 "preferences not restored after database initialization");
@@ -114,7 +114,7 @@ int main(int argc, char **argv) {
         require(waitUntil([&] { return !adapter.refreshing(); }), "valid refresh timed out");
         require(adapter.selectedServerId() == localId, "refresh stole selection from another group");
         require(Configs::dataManager->profilesRepo->GetAllProfileIds() == idsBefore, "unchanged refresh replaced profile IDs");
-        body = node.toUtf8() + '\n' + node.toUtf8().replace("Alpha", "Beta").replace("1.1.1.1", "1.0.0.1");
+        body = node.toUtf8() + '\n' + node.toUtf8().replace("Alpha", "Beta").replace("198.51.100.40", "198.51.100.41");
         adapter.updateGroup(gid, true);
         require(waitUntil([&] { return !adapter.refreshing(); }), "expanded refresh timed out");
         require(adapter.serversForGroup(gid).size() == 2, "expanded refresh has incorrect count");

@@ -114,8 +114,8 @@ int main(int argc, char *argv[]) {
     // 5. Test Subscription Parsing
     std::cout << "[TEST] Testing subscription parsing (VLESS, SS, Clash YAML)..." << std::endl;
     QString sampleSub = 
-        "vless://22222222-3333-4444-5555-666666666666@de.test.com:443?encryption=none&security=reality&sni=yahoo.com&fp=chrome&pbk=abc123xyz#Frankfurt-Reality\n"
-        "ss://YWVzLTEyOC1nY206c2VjcmV0@us.test.com:8388#NewYork-SS\n";
+        "vless://22222222-3333-4333-8555-666666666666@198.51.100.20:443?encryption=none&security=reality&sni=example.invalid&fp=chrome&pbk=test-public-key#Example-Reality\n"
+        "ss://YWVzLTEyOC1nY206dGVzdA==@198.51.100.30:8388#Example-SS\n";
 
     int parsedCount = 0;
     Subscription::ParseSink sink;
