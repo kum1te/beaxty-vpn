@@ -555,9 +555,9 @@ bool ThroneEngine::spawnCoreDaemon() {
         if (Configs::dataManager && Configs::dataManager->settingsRepo) {
             Configs::dataManager->settingsRepo->core_running = true;
         }
-        if (m_userWantsConnect && m_state == Disconnected) {
+        if (m_userWantsConnect && (m_state == Disconnected || m_state == Connecting)) {
             qDebug() << "[ThroneEngine] Core daemon ready, auto-starting requested connection...";
-            startConnection();
+            doStartConnection();
         }
     });
 
@@ -618,6 +618,31 @@ void ThroneEngine::toggleConnect() {
 void ThroneEngine::startConnection() {
     if (m_state == Protected || m_state == Connecting) return;
     m_userWantsConnect = true;
+
+    // The core can exit independently of the GUI. Recreate its IPC endpoint
+    // before trying to send Start; otherwise failover/reconnect only retries
+    // against a dead socket and can never recover.
+    if (!m_coreProcess || m_coreProcess->state() == QProcess::NotRunning) {
+        if (!spawnCoreDaemon()) {
+            m_userWantsConnect = false;
+            setState(Disconnected);
+            const QString error = QStringLiteral("Core daemon could not be started.");
+            if (ToastManager::instance()) ToastManager::instance()->showError(error);
+            emit errorOccurred(error);
+        }
+        return;
+    }
+
+    // Initialization may have started the process before it connected to the
+    // local socket. Wait for newConnection instead of reporting a false RPC
+    // failure; that callback will invoke doStartConnection once the socket is
+    // ready.
+    if (!m_rpcSocket || !m_rpcSocket->isOpen()) {
+        setState(Connecting);
+        m_statusMessage = QStringLiteral("Connecting to core...");
+        emit statusMessageChanged(m_statusMessage);
+        return;
+    }
     doStartConnection();
 }
 
