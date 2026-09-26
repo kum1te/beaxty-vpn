@@ -212,8 +212,9 @@ export APPDIR="${HERE}"
 if [ -z "${FONTCONFIG_PATH:-}" ] && [ -d "/etc/fonts" ]; then
     export FONTCONFIG_PATH="/etc/fonts"
 fi
-# Chromium sandbox flags
-if [ -z "${QTWEBENGINE_CHROMIUM_FLAGS:-}" ]; then
+# Chromium sandbox flags. Keep the sandbox enabled by default; the escape
+# hatch is intentionally explicit for diagnostics on systems without a helper.
+if [ "${BEAXTY_ALLOW_NO_SANDBOX:-}" = "1" ] && [ -z "${QTWEBENGINE_CHROMIUM_FLAGS:-}" ]; then
     export QTWEBENGINE_CHROMIUM_FLAGS="--no-sandbox"
 fi
 # Libraries and Qt paths
@@ -241,7 +242,7 @@ if [ -z "${FONTCONFIG_PATH:-}" ] && [ -d "/etc/fonts" ]; then
     export FONTCONFIG_PATH="/etc/fonts"
 fi
 
-if [ -z "${QTWEBENGINE_CHROMIUM_FLAGS:-}" ]; then
+if [ "${BEAXTY_ALLOW_NO_SANDBOX:-}" = "1" ] && [ -z "${QTWEBENGINE_CHROMIUM_FLAGS:-}" ]; then
     export QTWEBENGINE_CHROMIUM_FLAGS="--no-sandbox"
 fi
 

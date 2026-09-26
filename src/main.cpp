@@ -156,12 +156,15 @@ static void setupUnixSignalHandlers(QObject *parent) {
 int main(int argc, char *argv[]) {
 #if defined(BEAXTY_HAS_WEBENGINE)
 #if !defined(_WIN32)
-    // В AppImage и контейнерах песочница Chromium без SUID-хелпера падает
-    if (qEnvironmentVariableIsSet("APPIMAGE") || qEnvironmentVariableIsSet("container")) {
+    // Never disable Chromium's sandbox implicitly. Portable packages should
+    // ship a working QtWebEngine sandbox helper; opting out is an explicit
+    // operator decision for constrained test environments only.
+    if (qEnvironmentVariable("BEAXTY_ALLOW_NO_SANDBOX") == QStringLiteral("1")) {
         QByteArray existingFlags = qgetenv("QTWEBENGINE_CHROMIUM_FLAGS");
         if (!existingFlags.contains("--no-sandbox")) {
             QByteArray newFlags = existingFlags.isEmpty() ? QByteArray("--no-sandbox") : (existingFlags + " --no-sandbox");
             qputenv("QTWEBENGINE_CHROMIUM_FLAGS", newFlags);
+            qWarning("BEAXTY_ALLOW_NO_SANDBOX=1: QtWebEngine sandbox is disabled");
         }
     }
 #endif
