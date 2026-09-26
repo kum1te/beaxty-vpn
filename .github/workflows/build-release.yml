@@ -31,10 +31,15 @@ jobs:
         run: |
           TAG="${{ github.event.inputs.release_tag || github.ref_name }}"
           if ! gh release view "$TAG" --repo "${{ github.repository }}" &>/dev/null; then
+            EXTRA_FLAGS=()
+            if [[ "$TAG" == *-* ]]; then
+              EXTRA_FLAGS+=(--prerelease)
+            fi
             gh release create "$TAG" \
               --repo "${{ github.repository }}" \
               --title "Beaxty VPN $TAG" \
-              --generate-notes
+              --generate-notes \
+              "${EXTRA_FLAGS[@]}"
           fi
 
   build-linux:
