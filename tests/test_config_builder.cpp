@@ -6,6 +6,7 @@
 #include <QCoreApplication>
 #include <QFile>
 #include <QDir>
+#include <QTemporaryDir>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonArray>
@@ -35,8 +36,9 @@ int main(int argc, char *argv[]) {
     MW_show_log = [](const QString &msg) { std::cout << "  [ThroneLog] " << msg.toStdString() << std::endl; };
     MW_dialog_message = [](MwMessage, QStringList) {};
 
-    QString testDb = QStringLiteral("/tmp/test_beaxty_config.db");
-    QFile::remove(testDb);
+    QTemporaryDir tempDir(QStringLiteral("beaxty-config-builder-XXXXXX"));
+    if (!tempDir.isValid()) return 1;
+    const QString testDb = tempDir.filePath(QStringLiteral("throne.db"));
 
     Configs::initDB(testDb.toStdString());
 

@@ -233,7 +233,7 @@ Rectangle {
         radius: parent.radius
         color: "transparent"
         border.color: Theme.textSecondary
-        border.width: 1
+        border.width: 2
         visible: root.activeFocus
     }
 }

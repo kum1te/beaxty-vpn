@@ -9,12 +9,25 @@ Rectangle {
 
     default property alias content: innerContainer.children
     property bool interactive: false
+    property string accessibleName: ""
     property alias hovered: mouseArea.containsMouse
     // Draws a focus ring around the whole card. Subclasses cannot add one as a
     // child of their own, because `content` reparents children into innerContainer.
     property bool showFocusRing: false
 
     signal clicked()
+
+    Accessible.role: interactive ? Accessible.Button : Accessible.Grouping
+    Accessible.name: root.accessibleName
+    Accessible.onPressAction: if (root.interactive && root.enabled) root.clicked()
+    activeFocusOnTab: root.interactive && root.enabled
+    Keys.onPressed: function(event) {
+        if (!root.interactive || !root.enabled) return;
+        if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter || event.key === Qt.Key_Space) {
+            root.clicked();
+            event.accepted = true;
+        }
+    }
 
     implicitWidth: innerContainer.implicitWidth + 32
     implicitHeight: innerContainer.implicitHeight + 32
@@ -66,8 +79,8 @@ Rectangle {
         radius: root.radius
         color: "transparent"
         border.color: Theme.textSecondary
-        border.width: 1
-        visible: root.showFocusRing
+        border.width: 2
+        visible: root.showFocusRing || (root.interactive && root.activeFocus)
         z: 3
     }
 }

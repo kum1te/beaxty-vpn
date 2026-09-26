@@ -15,8 +15,8 @@ if (UNIX AND NOT APPLE)
     set(QT_DBUS_LIBRARY Qt6::DBus)
 endif ()
 
-find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets Qml Quick QuickControls2 Network ${QT_DBUS_COMPONENT})
-find_package(Qt6 OPTIONAL_COMPONENTS WebEngineQuick WebChannel Positioning)
+find_package(Qt6 6.8 REQUIRED COMPONENTS Core Gui Widgets Qml Quick QuickControls2 Network ${QT_DBUS_COMPONENT})
+find_package(Qt6 6.8 OPTIONAL_COMPONENTS WebEngineQuick WebChannel Positioning)
 find_package(Threads REQUIRED)
 
 set(THRONE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/3rdparty/throne)
@@ -55,7 +55,6 @@ elseif (APPLE)
     set(MACOSX_BUNDLE_BUNDLE_VERSION "1.1.0")
 else ()
     set(PLATFORM_SOURCES
-        ${THRONE_DIR}/src/sys/linux/LinuxCap.cpp
         ${THRONE_DIR}/src/sys/linux/coreDump.cpp
         ${THRONE_DIR}/src/sys/linux/AutoRun.cpp
         ${THRONE_DIR}/src/sys/linux/UrlScheme.cpp
@@ -256,6 +255,7 @@ add_library(beaxty_core STATIC
     src/core/LocalizationManager.cpp
     src/core/ThroneEngine.hpp
     src/core/ThroneEngine.cpp
+    src/core/LocalPeerCredentials.hpp
     src/core/ConfigAdapter.hpp
     src/core/ConfigAdapter.cpp
     src/core/DeviceIdentity.hpp
@@ -268,6 +268,8 @@ add_library(beaxty_core STATIC
     src/core/ToastManager.cpp
     src/core/DeepLinkManager.hpp
     src/core/DeepLinkManager.cpp
+    src/core/ActivationChannel.hpp
+    src/core/ActivationChannel.cpp
     src/core/AutostartManager.hpp
     src/core/AutostartManager.cpp
     src/ui/Theme.hpp
@@ -312,9 +314,20 @@ endif()
 # initializer the linker drops when no symbol in that object is referenced, which
 # silently leaves every qrc:/ lookup failing at runtime.
 set(BEAXTY_RESOURCES res/resources.qrc)
+set(BEAXTY_EMOJI_RESOURCES)
+if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    set(BEAXTY_EMOJI_RESOURCES res/fonts.qrc)
+endif()
 
 # BeaxtyVPN Main Executable
-add_executable(beaxty-vpn ${GUI_TYPE} src/main.cpp ${BEAXTY_RESOURCES})
+add_executable(beaxty-vpn ${GUI_TYPE} src/main.cpp src/ui/EmojiFont.cpp ${BEAXTY_RESOURCES} ${BEAXTY_EMOJI_RESOURCES})
+
+if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    # A single narrowly-scoped Polkit invocation performs the complete TUN
+    # capability setup. This helper never launches a shell or arbitrary command.
+    add_executable(beaxty-vpn-privileged-helper src/platform/linux/CapabilityInstaller.cpp)
+    target_link_libraries(beaxty-vpn-privileged-helper PRIVATE Qt6::Core)
+endif()
 
 if (APPLE)
     set_target_properties(beaxty-vpn PROPERTIES
@@ -350,24 +363,28 @@ endif()
 # Console-only tests: everything they need comes in through beaxty_core.
 foreach(_beaxty_test
     test_hwid
+    test_failover_policy
     test_config_builder
     test_subscription_import
     test_subscription_safety
-    test_connect_responsiveness
+    test_safe_missing_core
     test_traffic_looper_lifecycle
     test_routing_presets
     test_full_tunnel_wiring
     test_per_app_routing
-    test_ping_diag
     test_security_audit
     test_deeplink
+    test_core_peer_auth
+    test_activation_channel
 )
     add_executable(${_beaxty_test} tests/${_beaxty_test}.cpp ${BEAXTY_RESOURCES})
     target_link_libraries(${_beaxty_test} PRIVATE beaxty_core)
 endforeach()
 
+target_include_directories(test_failover_policy PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
 # Screenshot harness: additionally needs the QML runtime.
-add_executable(test_capture_ui tests/test_capture_ui.cpp ${BEAXTY_RESOURCES})
+add_executable(test_capture_ui tests/test_capture_ui.cpp src/ui/EmojiFont.cpp ${BEAXTY_RESOURCES} ${BEAXTY_EMOJI_RESOURCES})
 target_link_libraries(test_capture_ui PRIVATE
     beaxty_core
     Qt6::Quick
@@ -386,8 +403,9 @@ endif()
 # Deterministic, local checks available through one standard command.
 enable_testing()
 foreach(_test test_hwid test_config_builder test_subscription_import test_subscription_safety
+              test_failover_policy
               test_routing_presets test_full_tunnel_wiring test_per_app_routing test_security_audit
-              test_deeplink)
+              test_deeplink test_core_peer_auth test_activation_channel test_safe_missing_core test_traffic_looper_lifecycle)
     add_test(NAME ${_test} COMMAND ${_test})
     set_tests_properties(${_test} PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 60)
     # Existing tests use assert(); keep their checks active in Release builds.

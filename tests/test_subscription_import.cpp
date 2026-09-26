@@ -8,6 +8,7 @@
 #include <QDir>
 #include <QByteArray>
 #include <QDebug>
+#include <QTemporaryDir>
 
 #include "src/bridge/MainWindowBridge.hpp"
 #include "src/core/ConfigAdapter.hpp"
@@ -28,10 +29,9 @@ int main(int argc, char *argv[]) {
     std::cout << "[TEST] Starting End-to-End Subscription Import Test" << std::endl;
     std::cout << "====================================================" << std::endl;
 
-    QString testDbPath = QStringLiteral("/tmp/test_subscription_import.db");
-    if (QFile::exists(testDbPath)) {
-        QFile::remove(testDbPath);
-    }
+    QTemporaryDir tempDir(QStringLiteral("beaxty-subscription-import-XXXXXX"));
+    if (!tempDir.isValid()) return 1;
+    const QString testDbPath = tempDir.filePath(QStringLiteral("throne.db"));
 
     // Initialize headless bridge
     UI_InitMainWindow();

@@ -24,6 +24,7 @@ WebEngineView {
     settings.allowRunningInsecureContent: false
     settings.screenCaptureEnabled: false
     settings.webRTCPublicInterfacesOnly: true
+    settings.forceDarkMode: Theme.isDark
 
     // Disable geolocation, microphone, camera and desktop media permissions
     onPermissionRequested: function(permissionRequest) {
@@ -36,82 +37,60 @@ WebEngineView {
         request.dialogReject();
     }
 
-    function parseUrlParts(urlStr) {
-        var str = urlStr ? urlStr.toString() : "";
-        var match = str.match(/^([a-zA-Z][a-zA-Z0-9+.-]*):\/\/([^\/\?#]+)/);
-        if (match) {
-            var authority = match[2].toLowerCase();
-            // Strip userinfo before parsing the host. Otherwise
-            // https://cabinet.beaxty.com:443@untrusted.example/ would be
-            // mistaken for a trusted cabinet origin.
-            var at = authority.lastIndexOf("@");
-            if (at >= 0) authority = authority.substring(at + 1);
-            var hostOnly = authority;
-            if (hostOnly.charAt(0) === "[") {
-                var closing = hostOnly.indexOf("]");
-                if (closing >= 0) hostOnly = hostOnly.substring(1, closing);
-            } else {
-                var colon = hostOnly.lastIndexOf(":");
-                if (colon >= 0 && hostOnly.substring(colon + 1).match(/^\d*$/)) {
-                    hostOnly = hostOnly.substring(0, colon);
-                }
-            }
-            return { scheme: match[1].toLowerCase(), host: hostOnly };
-        }
-        return { scheme: "", host: "" };
+    function managerAvailable() {
+        return typeof deepLinkManager !== "undefined" && deepLinkManager !== null;
     }
 
-    function isAllowedExternalUrl(urlStr) {
-        var scheme = parseUrlParts(urlStr).scheme;
-        return scheme === "https" || scheme === "http";
+    function rejectNavigation(request) {
+        request.action = WebEngineNavigationRequest.IgnoreRequest;
     }
 
-    // Intercept navigation requests to enforce Strict Whitelist
+    function acceptNavigation(request) {
+        request.action = WebEngineNavigationRequest.AcceptRequest;
+    }
+
+    // Restrict top-level pages to the exact HTTPS cabinet origin. Only direct
+    // user clicks may hand links or beaxty:// deep links to the operating system.
     onNavigationRequested: function(request) {
         var reqUrl = request.url ? request.url.toString() : "";
-        var parts = parseUrlParts(reqUrl);
+        var isBeaxty = managerAvailable() && deepLinkManager.isBeaxtyUrl(reqUrl);
 
-        // 1. Intercept beaxty:// deeplinks
-        if (parts.scheme === "beaxty" || reqUrl.startsWith("beaxty://")) {
-            if (typeof request.reject === "function") request.reject();
-            else request.action = WebEngineNavigationRequest.IgnoreRequest;
-            webView.deepLinkTriggered(reqUrl);
+        if (isBeaxty) {
+            rejectNavigation(request);
+            if (request.isMainFrame &&
+                    request.navigationType === WebEngineNavigationRequest.LinkClickedNavigation) {
+                webView.deepLinkTriggered(reqUrl);
+            }
             return;
         }
 
-        // 2. Strict Origin Whitelist: allow only https://cabinet.beaxty.com and https://*.beaxty.com
-        var isTrustedHost = (parts.host === "cabinet.beaxty.com" || parts.host.endsWith(".beaxty.com"));
-        var isSecureScheme = (parts.scheme === "https");
+        if (managerAvailable() && deepLinkManager.isTrustedCabinetUrl(reqUrl)) {
+            acceptNavigation(request);
+            return;
+        }
 
-        if (isTrustedHost && isSecureScheme) {
-            if (typeof request.accept === "function") request.accept();
-            else request.action = WebEngineNavigationRequest.AcceptRequest;
-        } else {
-            // External URL: reject in embedded browser and open in external system browser
-            if (typeof request.reject === "function") request.reject();
-            else request.action = WebEngineNavigationRequest.IgnoreRequest;
-            console.log("[CabinetWebEngine] External URL redirected to system browser:",
-                         parts.scheme + "://" + parts.host);
-            if (isAllowedExternalUrl(reqUrl)) webView.externalUrlTriggered(reqUrl);
+        rejectNavigation(request);
+        if (request.isMainFrame &&
+                request.navigationType === WebEngineNavigationRequest.LinkClickedNavigation &&
+                managerAvailable() && deepLinkManager.isAllowedExternalUrl(reqUrl)) {
+            webView.externalUrlTriggered(reqUrl);
         }
     }
 
-    // Intercept target="_blank" or window.open requests
+    // Ignore automatic popups, even when their destination is trusted.
     onNewWindowRequested: function(request) {
         var reqUrl = request.requestedUrl ? request.requestedUrl.toString() : "";
-        var parts = parseUrlParts(reqUrl);
+        if (!request.userInitiated || !managerAvailable()) return;
 
-        if (parts.scheme === "beaxty" || reqUrl.startsWith("beaxty://")) {
+        if (deepLinkManager.isBeaxtyUrl(reqUrl)) {
             webView.deepLinkTriggered(reqUrl);
             return;
         }
 
-        var isTrustedHost = (parts.host === "cabinet.beaxty.com" || parts.host.endsWith(".beaxty.com"));
-
-        if (isTrustedHost && parts.scheme === "https") {
+        if (deepLinkManager.isTrustedCabinetUrl(reqUrl)) {
             // Open in same view instead of separate window
             webView.url = request.requestedUrl;
-        } else if (isAllowedExternalUrl(reqUrl)) {
+        } else if (deepLinkManager.isAllowedExternalUrl(reqUrl)) {
             webView.externalUrlTriggered(reqUrl);
         }
     }

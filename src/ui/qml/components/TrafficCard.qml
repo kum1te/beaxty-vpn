@@ -54,7 +54,8 @@ Card {
                     text: root.downloadSpeed
                     color: Theme.textPrimary
                     font.pixelSize: 13
-                    font.family: Theme.fontMono
+                    font.family: Theme.fontSans
+                    font.letterSpacing: 0
                     font.bold: true
                 }
             }
@@ -104,7 +105,8 @@ Card {
                     text: root.uploadSpeed
                     color: Theme.textPrimary
                     font.pixelSize: 13
-                    font.family: Theme.fontMono
+                    font.family: Theme.fontSans
+                    font.letterSpacing: 0
                     font.bold: true
                 }
             }
@@ -141,7 +143,8 @@ Card {
                     text: root.totalTraffic
                     color: Theme.textPrimary
                     font.pixelSize: 13
-                    font.family: Theme.fontMono
+                    font.family: Theme.fontSans
+                    font.letterSpacing: 0
                     font.bold: true
                 }
             }

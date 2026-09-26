@@ -6,15 +6,38 @@
 #include <QQmlContext>
 #include <QQuickWindow>
 #include <QQuickItem>
+#include <QFontDatabase>
+#include <QTextLayout>
 #include <QKeyEvent>
 #include <QTimer>
 #include <QDir>
 #include <QFile>
+#include <QTemporaryDir>
 #include <QImage>
 #include <iostream>
 #include <vector>
 #include <functional>
 #include <cmath>
+#include <algorithm>
+
+namespace {
+
+double relativeLuminance(const QColor &color) {
+    auto linear = [](double channel) {
+        return channel <= 0.04045 ? channel / 12.92 : std::pow((channel + 0.055) / 1.055, 2.4);
+    };
+    return 0.2126 * linear(color.redF()) +
+           0.7152 * linear(color.greenF()) +
+           0.0722 * linear(color.blueF());
+}
+
+double contrastRatio(const QColor &first, const QColor &second) {
+    const double a = relativeLuminance(first);
+    const double b = relativeLuminance(second);
+    return (std::max(a, b) + 0.05) / (std::min(a, b) + 0.05);
+}
+
+} // namespace
 
 #include "src/core/ThroneEngine.hpp"
 #include "src/core/DeepLinkManager.hpp"
@@ -26,6 +49,7 @@
 #include "src/core/LocalizationManager.hpp"
 #include "src/core/AppPrefs.hpp"
 #include "src/ui/Theme.hpp"
+#include "src/ui/EmojiFont.hpp"
 #include "src/bridge/MainWindowBridge.hpp"
 
 #if defined(BEAXTY_HAS_WEBENGINE)
@@ -44,24 +68,109 @@ int main(int argc, char *argv[]) {
 
     qputenv("QT_QUICK_CONTROLS_STYLE", "Basic");
     QApplication app(argc, argv);
+    registerEmojiFallback();
+
+    const QStringList commonFallbacks =
+        QFontDatabase::applicationFallbackFontFamilies(QChar::Script_Common);
+    if (!commonFallbacks.isEmpty()) {
+        const QString emojiFamily = commonFallbacks.last();
+        const QString sample = QStringLiteral("373 B/s, 16 B/s, 136 B, 38 ms");
+        for (const QString &family : {QStringLiteral("sans-serif"), QStringLiteral("monospace")}) {
+            QFont numericFont(family);
+            numericFont.setPixelSize(11);
+            numericFont.setBold(true);
+            QTextLayout numericLayout(sample, numericFont);
+            numericLayout.beginLayout();
+            QTextLine numericLine = numericLayout.createLine();
+            numericLine.setLineWidth(500);
+            numericLayout.endLayout();
+            for (qsizetype i = 0; i < sample.size(); ++i) {
+                if (!sample.at(i).isDigit()) continue;
+                for (const auto &run : numericLayout.glyphRuns(i, 1)) {
+                    if (run.rawFont().familyName() == emojiFamily) {
+                        std::cerr << "Numeric text was rendered with the emoji fallback font for "
+                                  << family.toStdString() << std::endl;
+                        return 1;
+                    }
+                }
+            }
+        }
+    }
 
     UI_InitMainWindow();
 
-    Theme theme;
     ToastManager toastManager;
     DeepLinkManager deepLinkManager;
     ThroneEngine engine;
-    DeviceIdentity deviceIdentity;
     RoutingManager routingManager;
     ConfigAdapter configAdapter;
     TrafficMonitor trafficMonitor;
     LocalizationManager locManager;
+
+    if (engine.stateLabel() != QStringLiteral("ОТКЛЮЧЕНО") ||
+        engine.localizedStatusMessage() != QStringLiteral("Готов") ||
+        engine.connectionModeLabel() != QStringLiteral("TUN АКТИВЕН")) {
+        std::cerr << "Russian connection status labels were not localized" << std::endl;
+        return 1;
+    }
+    locManager.setLanguage(QStringLiteral("en"));
+    if (engine.stateLabel() != QStringLiteral("DISCONNECTED") ||
+        engine.localizedStatusMessage() != QStringLiteral("Ready") ||
+        engine.connectionModeLabel() != QStringLiteral("TUN ACTIVE")) {
+        std::cerr << "English connection status labels were not localized" << std::endl;
+        return 1;
+    }
+    locManager.setLanguage(QStringLiteral("ru"));
+
+    QTemporaryDir tempDir(QDir(QDir::tempPath()).filePath(QStringLiteral("beaxty-ui-capture-XXXXXX")));
+    if (!tempDir.isValid()) {
+        std::cerr << "Failed to create an isolated temporary directory" << std::endl;
+        return 1;
+    }
+    const QString dbPath = tempDir.filePath(QStringLiteral("throne.db"));
+
+    // Use a non-ELF executable fixture so the permission gate can be exercised,
+    // while QProcess cannot start a core daemon from the source tree or host.
+    const QString fakeCorePath = tempDir.filePath(QStringLiteral("beaxty-core-fixture"));
+    QFile fakeCore(fakeCorePath);
+    if (!fakeCore.open(QIODevice::WriteOnly) ||
+        fakeCore.write("not a core executable\n") < 0) {
+        std::cerr << "Failed to create isolated fake core fixture" << std::endl;
+        return 1;
+    }
+    fakeCore.close();
+    if (!fakeCore.setPermissions(QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner)) {
+        std::cerr << "Failed to mark isolated fake core fixture executable" << std::endl;
+        return 1;
+    }
+    engine.initialize(dbPath, fakeCorePath);
+    if (engine.failoverEnabled()) {
+        std::cerr << "Automatic failover must be disabled in a fresh profile" << std::endl;
+        return 1;
+    }
+    AppPrefs::setInt(QStringLiteral("theme_mode"), Theme::Light);
+    AppPrefs::setBool(QStringLiteral("sidebar_collapsed"), true);
+    Theme theme;
     AppPrefsService appPrefsService;
-
-    QString dbPath = QStringLiteral("/tmp/test_capture_ui.db");
-    if (QFile::exists(dbPath)) QFile::remove(dbPath);
-
-    engine.initialize(dbPath);
+    if (theme.themeMode() != Theme::Light || !appPrefsService.sidebarCollapsed()) {
+        std::cerr << "Saved theme or sidebar preference was not loaded after database initialization" << std::endl;
+        return 1;
+    }
+    theme.setThemeMode(Theme::Dark);
+    for (const int mode : {Theme::Dark, Theme::Light}) {
+        theme.setThemeMode(mode);
+        const QList<QColor> surfaces = {theme.bgDark(), theme.cardBg(), theme.cardHover()};
+        for (const QColor &surface : surfaces) {
+            if (contrastRatio(theme.textSecondary(), surface) < 4.5 ||
+                contrastRatio(theme.textMuted(), surface) < 4.5) {
+                std::cerr << "Supporting text contrast fell below 4.5:1 in theme mode " << mode << '\n';
+                return 1;
+            }
+        }
+    }
+    theme.setThemeMode(Theme::Dark);
+    appPrefsService.setSidebarCollapsed(false);
+    DeviceIdentity deviceIdentity;
     routingManager.initializeRouteProfiles();
 
     configAdapter.setAutoUpdateSubsMode(0);
@@ -104,6 +213,14 @@ int main(int argc, char *argv[]) {
 
     window->show();
     window->setProperty("sidebarCollapsed", false);
+
+    // Synthetic rates make multi-digit typography visible in screenshots; this
+    // harness uses an invalid executable fixture and never starts a tunnel or
+    // Throne process.
+    trafficMonitor.updateTraffic(373, 16, 0, 0);
+    QTimer::singleShot(350, &app, [&trafficMonitor]() {
+        trafficMonitor.updateTraffic(373, 16, 0, 0);
+    });
 
     if (window->title() != QStringLiteral("beaxty VPN")) {
         std::cerr << "Window title mismatch! Expected 'beaxty VPN', got '" << window->title().toStdString() << "'\n";
@@ -165,6 +282,45 @@ int main(int argc, char *argv[]) {
         QMetaObject::invokeMethod(window, "setView", Q_ARG(QVariant, index));
         QCoreApplication::processEvents();
     };
+
+    // A connection request without the installed Linux TUN permission must
+    // stop at an explanatory consent dialog and remain disconnected.
+    setView(0);
+    engine.startConnection();
+    QCoreApplication::processEvents();
+    QObject *tunPermissionDialog = window->findChild<QObject *>("tunPermissionDialog");
+    if (!tunPermissionDialog || !tunPermissionDialog->property("visible").toBool() ||
+        engine.state() != ThroneEngine::Disconnected) {
+        std::cerr << "Missing TUN permission did not show consent while remaining disconnected" << std::endl;
+        return 1;
+    }
+    grab("build/beaxty_tun_permission_dialog.png");
+    QMetaObject::invokeMethod(tunPermissionDialog, "close");
+    QCoreApplication::processEvents();
+
+    // Check that preference updates travel back into the QML-bound switch state.
+    setView(4);
+    auto settingsView = window->findChild<QQuickItem *>("settingsView");
+    auto externalBrowserToggle = window->findChild<QObject *>("cabinetExternalBrowserToggle");
+    auto memorySaverToggle = window->findChild<QObject *>("cabinetMemorySaverToggle");
+    if (!settingsView || !externalBrowserToggle || !memorySaverToggle ||
+        settingsView->property("cabinetExternalBrowser").toBool() ||
+        !memorySaverToggle->property("checked").toBool()) {
+        std::cerr << "Cabinet preference controls did not initialize from the stored defaults" << std::endl;
+        return 1;
+    }
+    appPrefsService.setBool(QStringLiteral("cabinet_external_browser"), true);
+    appPrefsService.setBool(QStringLiteral("cabinet_memory_saver"), false);
+    QCoreApplication::processEvents();
+    if (!settingsView->property("cabinetExternalBrowser").toBool() ||
+        settingsView->property("cabinetMemorySaver").toBool() ||
+        memorySaverToggle->property("checked").toBool()) {
+        std::cerr << "Cabinet switches did not react to preference changes" << std::endl;
+        return 1;
+    }
+    appPrefsService.setBool(QStringLiteral("cabinet_external_browser"), false);
+    appPrefsService.setBool(QStringLiteral("cabinet_memory_saver"), true);
+    QCoreApplication::processEvents();
 
     struct Step {
         std::function<void()> action;
@@ -230,6 +386,25 @@ int main(int argc, char *argv[]) {
     }, 70});
     steps->push_back({[&]() {
         grab("build/beaxty_nodes_sidebar_mid_transition.png");
+        auto sidebar = window->findChild<QQuickItem *>("sidebar");
+        QList<QQuickItem *> navIcons;
+        std::function<void(QQuickItem *)> collectNavIcons = [&](QQuickItem *item) {
+            if (!item) return;
+            if (item->objectName() == QStringLiteral("sidebarNavIcon")) navIcons.append(item);
+            for (auto *child : item->childItems()) collectNavIcons(child);
+        };
+        collectNavIcons(window->contentItem());
+        if (!sidebar || navIcons.size() != 5) {
+            std::cerr << "Sidebar navigation icons were not available during the transition\n";
+            std::exit(1);
+        }
+        for (auto *icon : navIcons) {
+            const qreal iconX = icon->mapToItem(sidebar, QPointF(0, 0)).x();
+            if (iconX < 24.0 || iconX > 27.0) {
+                std::cerr << "Sidebar icon drifted during collapse: x=" << iconX << '\n';
+                std::exit(1);
+            }
+        }
         QMetaObject::invokeMethod(window, "toggleSidebar");
         window->resize(840, 560);
     }, 70});
@@ -379,8 +554,26 @@ int main(int argc, char *argv[]) {
     // 7. Nodes View: 840x560
     steps->push_back({[&]() {
         grab("build/beaxty_nodes_840x560.png");
+        toastManager.showInfo(QStringLiteral("Notification layout check"), 3000);
+    }, 1});
+
+    steps->push_back({[&]() {
+        auto toast = window->findChild<QQuickItem *>("toastNotification");
+        auto viewStack = window->findChild<QQuickItem *>("viewStack");
+        if (!toast || !viewStack || toast->property("opacity").toReal() <= 0.01) {
+            std::cerr << "Notification layout fixture did not become visible" << std::endl;
+            std::exit(1);
+        }
+        const qreal toastBottom = toast->mapToItem(window->contentItem(), QPointF(0, toast->height())).y();
+        const qreal pageTop = viewStack->mapToItem(window->contentItem(), QPointF(0, 0)).y();
+        if (pageTop < toastBottom + 8.0) {
+            std::cerr << "Notification overlaps the page controls: pageTop=" << pageTop
+                      << ", toastBottom=" << toastBottom << std::endl;
+            std::exit(1);
+        }
+        grab("build/beaxty_nodes_notification_layout.png");
         window->resize(1280, 800);
-    }, 350});
+    }, 250});
 
     // 8. Nodes View: 1280x800
     steps->push_back({[&]() {
@@ -434,6 +627,9 @@ int main(int argc, char *argv[]) {
     // 13. Advanced Routing View: 960x640
     steps->push_back({[&]() {
         grab("build/beaxty_advanced_routing.png");
+        // Keep UI captures deterministic and offline: do not load the live
+        // cabinet service from an automated test.
+        appPrefsService.setBool(QStringLiteral("cabinet_external_browser"), true);
         setView(3); // Cabinet View
     }, 450});
 
@@ -443,7 +639,97 @@ int main(int argc, char *argv[]) {
         setView(4); // Settings View
     }, 450});
 
-    // 14. Settings View: 960x640
+    // 14. Enable failover and verify the two-list pool picker and ordering.
+    steps->push_back({[&]() {
+        const auto fallbackCandidates = configAdapter.servers();
+        int firstFallbackId = -1;
+        int secondFallbackId = -1;
+        for (qsizetype i = 0; i < std::min<qsizetype>(2, fallbackCandidates.size()); ++i) {
+            const int id = fallbackCandidates[i].toMap().value(QStringLiteral("id")).toInt();
+            if (i == 0) firstFallbackId = id;
+            else secondFallbackId = id;
+            engine.setFailoverServer(id, true);
+        }
+
+        // The selected-list order is the configured priority for the
+        // "Configured order" strategy and must persist when reordered.
+        engine.moveFailoverServer(secondFallbackId, -1);
+        const QVariantList reorderedIds = engine.failoverServerIds();
+        const bool reorderWorked = reorderedIds.size() >= 2 &&
+                                   reorderedIds[0].toInt() == secondFallbackId &&
+                                   reorderedIds[1].toInt() == firstFallbackId;
+        engine.moveFailoverServer(secondFallbackId, 1);
+        engine.setFailoverEnabled(true);
+        QCoreApplication::processEvents();
+        auto failoverRow = window->findChild<QQuickItem *>("failoverToggleRow");
+        auto failoverControls = window->findChild<QQuickItem *>("failoverControls");
+        auto fallbackLists = window->findChild<QQuickItem *>("fallbackLists");
+        auto availableFallbackList = window->findChild<QQuickItem *>("availableFallbackList");
+        auto selectedFallbackList = window->findChild<QQuickItem *>("selectedFallbackList");
+        bool selectedFallbacksPersisted = fallbackCandidates.size() >= 2;
+        for (qsizetype i = 0; selectedFallbacksPersisted && i < 2; ++i) {
+            selectedFallbacksPersisted = engine.isFailoverServer(
+                fallbackCandidates[i].toMap().value(QStringLiteral("id")).toInt());
+        }
+        const int availableCount = availableFallbackList ? availableFallbackList->property("count").toInt() : -1;
+        const int selectedCount = selectedFallbackList ? selectedFallbackList->property("count").toInt() : -1;
+
+        auto availableSearch = window->findChild<QObject *>("fallbackAvailableSearch");
+        if (availableSearch) {
+            availableSearch->setProperty("text", QStringLiteral("no-server-can-match-this-query"));
+            QCoreApplication::processEvents();
+        }
+        const int filteredAvailableCount = availableFallbackList ? availableFallbackList->property("count").toInt() : -1;
+        if (availableSearch) {
+            availableSearch->setProperty("text", QString());
+            QCoreApplication::processEvents();
+        }
+
+        if (fallbackCandidates.size() < 2 || !engine.failoverEnabled() || !failoverRow ||
+            !failoverRow->property("checked").toBool() || !failoverControls || !failoverControls->isVisible() ||
+            !fallbackLists || fallbackLists->property("columns").toInt() != 2 ||
+            !selectedFallbacksPersisted || !reorderWorked || !availableFallbackList || !selectedFallbackList ||
+            availableFallbackList->height() <= 0 || selectedFallbackList->height() <= 0 ||
+            selectedCount != 2 || availableCount != fallbackCandidates.size() - 2 ||
+            (availableSearch && filteredAvailableCount != 0)) {
+            std::cerr << "Failover settings did not show its selected server pool: enabled="
+                      << engine.failoverEnabled() << ", row="
+                      << (failoverRow ? failoverRow->property("checked").toBool() : false)
+                      << ", controls=" << (failoverControls && failoverControls->isVisible())
+                      << ", selected/available=" << selectedCount << "/" << availableCount
+                      << ", columns=" << (fallbackLists ? fallbackLists->property("columns").toInt() : -1)
+                      << ", reorder=" << reorderWorked
+                      << ", filtered available=" << filteredAvailableCount
+                      << std::endl;
+            std::exit(1);
+        }
+    }, 300});
+
+    // Capture the picker at wide, narrow and desktop widths to verify its
+    // responsive two-column / stacked layouts.
+    steps->push_back({[&]() {
+        grab("build/beaxty_settings_failover.png");
+        auto fallbackLists = window->findChild<QQuickItem *>("fallbackLists");
+        window->resize(840, 560);
+        QCoreApplication::processEvents();
+        if (!fallbackLists || fallbackLists->property("columns").toInt() != 1) {
+            std::cerr << "Fallback picker did not stack at narrow width" << std::endl;
+            std::exit(1);
+        }
+        grab("build/beaxty_settings_failover_narrow.png");
+        window->resize(1280, 800);
+        QCoreApplication::processEvents();
+        if (fallbackLists->property("columns").toInt() != 2) {
+            std::cerr << "Fallback picker did not use two columns at desktop width" << std::endl;
+            std::exit(1);
+        }
+        grab("build/beaxty_settings_failover_wide.png");
+        window->resize(960, 640);
+        QCoreApplication::processEvents();
+        engine.setFailoverEnabled(false);
+    }, 350});
+
+    // 14b. Settings View: 960x640 with failover disabled.
     steps->push_back({[&]() {
         grab("build/beaxty_settings_960x640.png");
         grab("build/beaxty_settings.png");
@@ -529,6 +815,10 @@ int main(int argc, char *argv[]) {
     // 20. Finish
     steps->push_back({[&]() {
         std::cout << "[UI Capture] Completed all captures successfully!" << std::endl;
+        if (!tempDir.remove()) {
+            std::cerr << "Could not remove isolated UI capture data" << std::endl;
+            _Exit(1);
+        }
         _Exit(0);
     }, 0});
 

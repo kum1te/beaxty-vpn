@@ -9,10 +9,12 @@ import ".."
 Item {
     id: root
     z: 99999
-    width: Math.min(parent ? parent.width - 48 : 360, 400)
+    width: Math.min(parent ? parent.width - 48 : 360,
+                    Math.max(240, messageMetrics.advanceWidth + 76))
     implicitHeight: card.implicitHeight
     height: card.implicitHeight
-    visible: opacity > 0
+    visible: true
+    enabled: opacity > 0.01
     opacity: 0
 
     property string message: ""
@@ -56,13 +58,20 @@ Item {
         }
     }
 
+    TextMetrics {
+        id: messageMetrics
+        text: root.message
+        font: msgText.font
+    }
+
     Rectangle {
         id: card
         width: parent.width
         implicitHeight: Math.max(48, toastRow.implicitHeight + 24)
         height: implicitHeight
-        color: "#18181B"
-        border.color: root.toastType === "error" ? "#552222" : (root.toastType === "success" ? "#225533" : "#2E2E33")
+        color: Theme.cardBg
+        border.color: root.toastType === "error" ? (Theme.isDark ? "#7F1D1D" : "#FECACA")
+                     : (root.toastType === "success" ? (Theme.isDark ? "#166534" : "#BBF7D0") : Theme.cardBorder)
         border.width: 1
         radius: 12
 
@@ -78,7 +87,8 @@ Item {
                 Layout.preferredWidth: 4
                 Layout.preferredHeight: Math.max(20, msgText.implicitHeight)
                 radius: 2
-                color: root.toastType === "error" ? "#FF5555" : (root.toastType === "success" ? "#FFFFFF" : "#8E8E93")
+                color: root.toastType === "error" ? (Theme.isDark ? "#F87171" : "#B91C1C")
+                     : (root.toastType === "success" ? (Theme.isDark ? "#4ADE80" : "#15803D") : Theme.textSecondary)
                 Layout.alignment: Qt.AlignVCenter
             }
 
@@ -86,7 +96,7 @@ Item {
                 id: msgText
                 Layout.fillWidth: true
                 text: root.message
-                color: "#FFFFFF"
+                color: Theme.textPrimary
                 font.pixelSize: 12
                 font.weight: Font.Medium
                 wrapMode: Text.WordWrap
@@ -94,17 +104,40 @@ Item {
             }
 
             Text {
+                id: closeButton
+                objectName: "toastCloseButton"
+                Layout.preferredWidth: 24
+                Layout.preferredHeight: 24
+                horizontalAlignment: Text.AlignHCenter
+                verticalAlignment: Text.AlignVCenter
                 text: "✕"
-                color: Theme.textMuted
-                font.pixelSize: 12
+                color: closeArea.containsMouse ? Theme.textPrimary : Theme.textSecondary
+                font.pixelSize: 14
                 font.bold: true
                 Layout.alignment: Qt.AlignVCenter
+                Accessible.role: Accessible.Button
+                Accessible.name: qsTr("Закрыть уведомление")
+                Accessible.onPressAction: root.dismiss()
+                activeFocusOnTab: true
+                Keys.onReturnPressed: root.dismiss()
+                Keys.onSpacePressed: root.dismiss()
 
                 MouseArea {
+                    id: closeArea
                     anchors.fill: parent
-                    anchors.margins: -6
+                    anchors.margins: -4
+                    hoverEnabled: true
                     cursorShape: Qt.PointingHandCursor
                     onClicked: root.dismiss()
+                }
+
+                Rectangle {
+                    anchors.fill: parent
+                    radius: 6
+                    color: "transparent"
+                    border.color: Theme.textSecondary
+                    border.width: 2
+                    visible: closeButton.activeFocus
                 }
             }
         }

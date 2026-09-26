@@ -70,11 +70,13 @@ int main(int argc, char **argv) {
         require(server.listen(QHostAddress::LocalHost), "cannot listen on loopback for network regression tests");
         QByteArray body = node.toUtf8();
         int requests = 0;
+        QByteArray lastRequest;
         QObject::connect(&server, &QTcpServer::newConnection, &app, [&] {
             while (auto socket = server.nextPendingConnection()) {
                 QObject::connect(socket, &QTcpSocket::disconnected, socket, &QObject::deleteLater);
                 QObject::connect(socket, &QTcpSocket::readyRead, socket, [&, socket] {
                     const auto request = socket->readAll();
+                    lastRequest = request;
                     if (socket->property("answered").toBool()) return;
                     socket->setProperty("answered", true);
                     ++requests;
@@ -141,6 +143,12 @@ int main(int argc, char **argv) {
                 require(!response.error.isEmpty() && response.data.isEmpty(), "oversized response was accepted");
             });
         require(waitUntil([&] { return callback; }), "bounded download timed out");
+        callback = false;
+        Configs_network::NetworkRequestHelper::HttpGetAsync(&app, url, true, false, 1024,
+            [&](Configs_network::HTTPResponse) { callback = true; });
+        require(waitUntil([&] { return callback; }), "HTTP privacy regression request timed out");
+        require(!lastRequest.toLower().contains("x-hwid:"),
+                "device identifier was sent over plain HTTP");
         auto context = new QObject;
         callback = false;
         Configs_network::NetworkRequestHelper::HttpGetAsync(context, url, false, false, 1024,

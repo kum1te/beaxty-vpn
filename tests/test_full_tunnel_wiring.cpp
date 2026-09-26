@@ -9,6 +9,7 @@
 #include <QLockFile>
 #include <QJsonObject>
 #include <QJsonDocument>
+#include <QTemporaryDir>
 
 #include "3rdparty/throne/include/global/Configs.hpp"
 #include "3rdparty/throne/include/database/DatabaseManager.h"
@@ -37,13 +38,14 @@ int main(int argc, char *argv[]) {
 
     UI_InitMainWindow();
 
-    QString testDbPath = QStringLiteral("/tmp/test_full_tunnel_wiring.db");
-    if (QFile::exists(testDbPath)) QFile::remove(testDbPath);
+    QTemporaryDir tempDir(QStringLiteral("beaxty-full-tunnel-wiring-XXXXXX"));
+    if (!tempDir.isValid()) return 1;
+    const QString testDbPath = tempDir.filePath(QStringLiteral("throne.db"));
 
     // 1. SettingsRepo Defaults Verification
     std::cout << "\n[1] Verifying network defaults in SettingsRepo..." << std::endl;
     ThroneEngine engine;
-    engine.initialize(testDbPath);
+    engine.initialize(testDbPath, tempDir.filePath(QStringLiteral("missing-core")));
     RoutingManager routingManager;
     routingManager.initializeRouteProfiles();
 

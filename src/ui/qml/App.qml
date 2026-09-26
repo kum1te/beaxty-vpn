@@ -45,6 +45,15 @@ Window {
     // Closing hides to tray rather than quitting (GOAL_PROMPT: minimize to tray on
     // close). Quit stays available from the tray menu.
     property bool quitting: false
+    // Toasts use a reserved strip above page content so they never cover active
+    // controls such as the Nodes search, filters, or add button.
+    property real notificationInset: toast.opacity > 0.01
+                                     ? toast.height + toast.anchors.topMargin + 12
+                                     : 0
+    Behavior on notificationInset {
+        NumberAnimation { duration: 180; easing.type: Easing.OutCubic }
+    }
+
     onClosing: function(close) {
         var toTray = (typeof throneEngine !== "undefined") ? throneEngine.closeToTray : true
         if (toTray && !window.quitting) {
@@ -120,90 +129,85 @@ Window {
 
                 // 1. Sidebar Brand Header
                 Item {
+                    id: sidebarHeader
+                    objectName: "sidebarHeader"
                     Layout.fillWidth: true
                     Layout.preferredHeight: 70
 
-                    RowLayout {
-                        anchors.fill: parent
-                        anchors.leftMargin: 16 + window.sidebarProgress
-                        anchors.rightMargin: parent.width - anchors.leftMargin - 192
-                        spacing: 10
+                    Rectangle {
+                        id: logoBadge
+                        objectName: "sidebarLogo"
+                        x: 16 + window.sidebarProgress
+                        anchors.verticalCenter: parent.verticalCenter
+                        width: 34
+                        height: 34
+                        radius: 9
+                        color: Theme.isDark ? Theme.cardBg : Theme.cardHover
+                        border.color: Theme.cardBorder
+                        border.width: 1
 
+                        Image {
+                            anchors.centerIn: parent
+                            width: 20
+                            height: 20
+                            source: Theme.icon("qrc:/icons/app_icon.svg", Theme.isDark)
+                            fillMode: Image.PreserveAspectFit
+                        }
 
-
-                        Rectangle {
-                            id: logoBadge
-                            width: 34
-                            height: 34
-                            radius: 9
-                            color: Theme.isDark ? Theme.cardBg : Theme.cardHover
-                            border.color: Theme.cardBorder
-                            border.width: 1
-
-                            Image {
-                                anchors.centerIn: parent
-                                width: 20
-                                height: 20
-                                source: Theme.icon("qrc:/icons/app_icon.svg", Theme.isDark)
-                                fillMode: Image.PreserveAspectFit
-                            }
-
-                            MouseArea {
-                                id: logoMouseArea
-                                anchors.fill: parent
-                                hoverEnabled: window.sidebarCollapsed
-                                cursorShape: window.sidebarCollapsed ? Qt.PointingHandCursor : Qt.ArrowCursor
-                                onClicked: {
-                                    if (window.sidebarCollapsed) {
-                                        window.toggleSidebar();
-                                    }
-                                }
-                            }
-
-                            ToolTip {
-                                id: logoToolTip
-                                visible: window.sidebarCollapsed && logoMouseArea.containsMouse
-                                text: qsTr("Развернуть панель")
-                                delay: 300
-                                timeout: 2500
-                                contentItem: Text {
-                                    text: logoToolTip.text
-                                    color: Theme.textPrimary
-                                    font.pixelSize: 12
-                                    font.bold: true
-                                }
-                                background: Rectangle {
-                                    color: Theme.cardBg
-                                    border.color: Theme.cardBorder
-                                    border.width: 1
-                                    radius: 6
-                                }
+                        MouseArea {
+                            id: logoMouseArea
+                            anchors.fill: parent
+                            hoverEnabled: window.sidebarCollapsed
+                            cursorShape: window.sidebarCollapsed ? Qt.PointingHandCursor : Qt.ArrowCursor
+                            onClicked: {
+                                if (window.sidebarCollapsed) window.toggleSidebar();
                             }
                         }
 
-                        Row {
-                            Layout.fillWidth: true
-                            spacing: 5
-                            Layout.alignment: Qt.AlignVCenter
-                            opacity: 1 - window.sidebarProgress
-
-
-                            Text {
-                                text: "beaxty"
+                        ToolTip {
+                            id: logoToolTip
+                            visible: window.sidebarCollapsed && logoMouseArea.containsMouse
+                            text: qsTr("Развернуть панель")
+                            delay: 300
+                            timeout: 2500
+                            contentItem: Text {
+                                text: logoToolTip.text
                                 color: Theme.textPrimary
-                                font.pixelSize: 15
+                                font.pixelSize: 12
                                 font.bold: true
-                                font.letterSpacing: 0.5
                             }
+                            background: Rectangle {
+                                color: Theme.cardBg
+                                border.color: Theme.cardBorder
+                                border.width: 1
+                                radius: 6
+                            }
+                        }
+                    }
 
-                            Text {
-                                text: "VPN"
-                                color: Theme.textSecondary
-                                font.pixelSize: 13
-                                font.bold: true
-                                font.family: Theme.fontMono
-                                font.letterSpacing: 1.2
-                            }
+                    Row {
+                        x: logoBadge.x + logoBadge.width + 10
+                        anchors.verticalCenter: parent.verticalCenter
+                        width: Math.max(0, parent.width - x - 16)
+                        clip: true
+                        spacing: 5
+                        opacity: 1 - window.sidebarProgress
+
+                        Text {
+                            text: "beaxty"
+                            color: Theme.textPrimary
+                            font.pixelSize: 15
+                            font.bold: true
+                            font.letterSpacing: 0.5
+                        }
+
+                        Text {
+                            text: "VPN"
+                            color: Theme.textSecondary
+                            font.pixelSize: 13
+                            font.bold: true
+                            font.family: Theme.fontMono
+                            font.letterSpacing: 1.2
                         }
                     }
 
@@ -265,6 +269,7 @@ Window {
                     Layout.rightMargin: 12 - 4 * window.sidebarProgress
                     Layout.bottomMargin: 8
                     radius: 8
+                    clip: true
                     color: toggleRowMa.containsMouse ? Theme.cardHover : "transparent"
                     border.color: toggleRowMa.containsMouse ? Theme.cardBorder : "transparent"
                     border.width: 1
@@ -272,16 +277,14 @@ Window {
                     Behavior on color { ColorAnimation { duration: 150 } }
                     Behavior on border.color { ColorAnimation { duration: 150 } }
 
-                    RowLayout {
+                    Item {
                         anchors.fill: parent
-                        anchors.leftMargin: 14 + 4 * window.sidebarProgress
-                        anchors.rightMargin: parent.width - anchors.leftMargin - 168
-                        spacing: 12
 
                         Image {
-                            Layout.preferredWidth: 16
-                            Layout.preferredHeight: 16
-                            Layout.alignment: Qt.AlignVCenter
+                            x: 14 + 4 * window.sidebarProgress
+                            anchors.verticalCenter: parent.verticalCenter
+                            width: 16
+                            height: 16
                             source: Theme.icon("qrc:/icons/sidebar_toggle.svg", Theme.isDark)
                             rotation: 180 * window.sidebarProgress
                             opacity: toggleRowMa.containsMouse ? 1.0 : 0.6
@@ -289,14 +292,15 @@ Window {
                         }
 
                         Text {
-                            Layout.fillWidth: true
+                            x: 42 + 4 * window.sidebarProgress
+                            anchors.verticalCenter: parent.verticalCenter
+                            width: Math.max(0, parent.width - x - 12)
                             opacity: 1 - window.sidebarProgress
                             text: qsTr("Свернуть")
                             color: Theme.textSecondary
                             font.pixelSize: 13
                             font.bold: false
                             elide: Text.ElideRight
-
                         }
                     }
 
@@ -341,17 +345,15 @@ Window {
                     Layout.preferredHeight: 64
                     color: Theme.bgDark
 
-                    RowLayout {
-                        anchors.fill: parent
-                        anchors.leftMargin: 16 + 13 * window.sidebarProgress
-                        anchors.rightMargin: parent.width - anchors.leftMargin - 188
-                        spacing: 10
-
-
+                    Item {
+                        x: 16 + 13 * window.sidebarProgress
+                        width: 188
+                        height: parent.height
 
                         // Status dot
                         Rectangle {
-                            Layout.alignment: Qt.AlignVCenter
+                            x: 0
+                            anchors.verticalCenter: parent.verticalCenter
                             width: 10
                             height: 10
                             radius: 5
@@ -369,29 +371,40 @@ Window {
                         }
 
                         ColumnLayout {
-                            Layout.fillWidth: true
+                            x: 20
+                            anchors.verticalCenter: parent.verticalCenter
+                            width: 114
                             opacity: 1 - window.sidebarProgress
                             spacing: 1
 
-
                             Text {
-                                text: (typeof throneEngine !== "undefined") ? throneEngine.stateString : "DISCONNECTED"
+                                text: {
+                                    var currentLanguage = (typeof locManager !== "undefined") ? locManager.language : "ru";
+                                    return (typeof throneEngine !== "undefined") ? throneEngine.stateLabel : qsTr("ОТКЛЮЧЕНО");
+                                }
                                 color: Theme.textPrimary
                                 font.pixelSize: 11
                                 font.bold: true
                                 font.letterSpacing: 1
+                                elide: Text.ElideRight
                             }
 
                             Text {
-                                text: (typeof throneEngine !== "undefined" && throneEngine.tunModeEnabled) ? "TUN ACTIVE" : "PROXY ONLY"
+                                text: {
+                                    var currentLanguage = (typeof locManager !== "undefined") ? locManager.language : "ru";
+                                    return (typeof throneEngine !== "undefined") ? throneEngine.connectionModeLabel : qsTr("ТОЛЬКО ПРОКСИ");
+                                }
                                 color: Theme.textMuted
                                 font.pixelSize: 9
                                 font.letterSpacing: 0.8
+                                elide: Text.ElideRight
                             }
                         }
 
                         // TUN Badge
                         Rectangle {
+                            x: 144
+                            anchors.verticalCenter: parent.verticalCenter
                             opacity: 1 - window.sidebarProgress
                             height: 20
                             width: 44
@@ -399,7 +412,6 @@ Window {
                             color: Theme.cardBg
                             border.color: Theme.cardBorder
                             border.width: 1
-
 
                             Text {
                                 anchors.centerIn: parent
@@ -424,7 +436,10 @@ Window {
                     ToolTip {
                         id: footerStatusTip
                         visible: window.sidebarCollapsed && statusFooterMa.containsMouse
-                        text: (typeof throneEngine !== "undefined") ? (throneEngine.stateString + (throneEngine.tunModeEnabled ? " • TUN" : " • PROXY")) : "DISCONNECTED"
+                        text: {
+                            var currentLanguage = (typeof locManager !== "undefined") ? locManager.language : "ru";
+                            return (typeof throneEngine !== "undefined") ? (throneEngine.stateLabel + (throneEngine.tunModeEnabled ? " • TUN" : " • PROXY")) : qsTr("ОТКЛЮЧЕНО");
+                        }
                         delay: 250
                         timeout: 3000
                         contentItem: Text {
@@ -452,6 +467,7 @@ Window {
             objectName: "viewStack"
             Layout.fillWidth: true
             Layout.fillHeight: true
+            Layout.topMargin: window.notificationInset
             currentIndex: 0
 
             SectionPage {
@@ -488,6 +504,92 @@ Window {
         function onDeepLinkReceived(targetUrl, groupName) {
             window.showAndRaise();
             window.openImportSheetWithUrl(targetUrl, groupName);
+        }
+    }
+
+    Connections {
+        target: (typeof throneEngine !== "undefined") ? throneEngine : null
+        function onTunPermissionConsentRequested() {
+            tunPermissionDialog.open();
+        }
+    }
+
+    Dialog {
+        id: tunPermissionDialog
+        objectName: "tunPermissionDialog"
+        anchors.centerIn: Overlay.overlay
+        width: Math.min(window.width - 32, 460)
+        height: 250
+        modal: true
+        dim: true
+        padding: 20
+
+        Overlay.modal: Rectangle {
+            color: Qt.rgba(0, 0, 0, 0.7)
+        }
+
+        background: Rectangle {
+            color: Theme.cardBg
+            border.color: Theme.cardBorder
+            border.width: 1
+            radius: 14
+        }
+
+        header: Item {
+            width: parent.width
+            height: 38
+
+            Text {
+                anchors.left: parent.left
+                anchors.leftMargin: 18
+                anchors.verticalCenter: parent.verticalCenter
+                text: qsTr("Разрешение для TUN")
+                color: Theme.textPrimary
+                font.pixelSize: 16
+                font.bold: true
+            }
+        }
+
+        contentItem: ColumnLayout {
+            spacing: 10
+
+            Text {
+                Layout.fillWidth: true
+                text: qsTr("Для создания системного TUN-интерфейса сетевому ядру нужно право CAP_NET_ADMIN.")
+                color: Theme.textPrimary
+                font.pixelSize: 13
+                wrapMode: Text.WordWrap
+            }
+
+            Text {
+                Layout.fillWidth: true
+                text: qsTr("После вашего подтверждения приложение один раз установит проверенную копию ядра с этим ограниченным правом и продолжит подключение. SUID-root не используется.")
+                color: Theme.textSecondary
+                font.pixelSize: 12
+                wrapMode: Text.WordWrap
+            }
+        }
+
+        footer: RowLayout {
+            spacing: 8
+
+            Item { Layout.fillWidth: true }
+
+            ActionButton {
+                text: qsTr("Отмена")
+                onClicked: tunPermissionDialog.close()
+            }
+
+            ActionButton {
+                text: qsTr("Разрешить и подключиться")
+                primary: true
+                onClicked: {
+                    tunPermissionDialog.close();
+                    if (typeof throneEngine !== "undefined") {
+                        throneEngine.connectAfterTunPermissionConsent();
+                    }
+                }
+            }
         }
     }
 

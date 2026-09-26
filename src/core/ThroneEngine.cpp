@@ -2,6 +2,7 @@
 // Copyright (C) 2026 BeaxtyVPN Authors
 
 #include "ThroneEngine.hpp"
+#include "LocalPeerCredentials.hpp"
 #include "AppPrefs.hpp"
 #include "ToastManager.hpp"
 #include "ConfigAdapter.hpp"
@@ -32,12 +33,235 @@
 #include <QFileDialog>
 #include <QSysInfo>
 #include <QProcess>
+#include <QJsonArray>
+#include <QStringList>
+#include <QCryptographicHash>
 #include <QRegularExpression>
+#include <QSaveFile>
+#include <QLocalSocket>
+#include <memory>
+#include <algorithm>
 
 #if defined(Q_OS_LINUX)
 #include <unistd.h>
 #include <sys/prctl.h>
+#include <sys/stat.h>
+#include <sys/xattr.h>
+#include <cerrno>
 #include <signal.h>
+#include <QFile>
+#include <QFileDevice>
+#endif
+
+namespace {
+
+bool testCurrentCoreRouteBlocking(int timeoutMs, int *latencyMs) {
+    if (latencyMs) *latencyMs = 0;
+    if (!API::defaultClient) return false;
+
+    const QString configuredUrl = Configs::dataManager && Configs::dataManager->settingsRepo
+                                      ? Configs::dataManager->settingsRepo->test_latency_url.trimmed()
+                                      : QString();
+    QStringList urls;
+    if (!configuredUrl.isEmpty()) urls.append(configuredUrl);
+    for (const QString &url : {QStringLiteral("http://cp.cloudflare.com/generate_204"),
+                               QStringLiteral("https://www.google.com/generate_204")}) {
+        if (!urls.contains(url, Qt::CaseInsensitive)) urls.append(url);
+    }
+
+    for (const QString &url : urls) {
+        libcore::TestReq request;
+        request.test_current = true;
+        // With test_current=true, the core uses the live "proxy" outbound unless
+        // use_default_outbound is explicitly set. Keep this false so the probe
+        // measures the tunnel path rather than a direct/default route.
+        request.use_default_outbound = false;
+        request.max_concurrency = 1;
+        request.test_timeout_ms = qBound(500, timeoutMs, 5000);
+        request.url = url.toStdString();
+
+        bool rpcOk = false;
+        const auto response = API::defaultClient->Test(&rpcOk, request);
+        if (!rpcOk) return false;
+
+        if (!response.results.empty() && response.results.front().error.value().empty()) {
+            if (latencyMs) *latencyMs = qMax(0, response.results.front().latency_ms.value());
+            return true;
+        }
+    }
+
+    return false;
+}
+
+} // namespace
+
+#if defined(Q_OS_LINUX)
+namespace {
+
+bool hasSetIdBits(const QString &path);
+
+bool rootOwnedNotWritableByOthers(const QFileInfo &info) {
+    const QFile::Permissions writableByOthers = QFile::WriteGroup | QFile::WriteOther;
+    return info.ownerId() == 0 && !(info.permissions() & writableByOthers);
+}
+
+bool trustedRootDirectoryChain(const QString &directory) {
+    QString current = QFileInfo(directory).canonicalFilePath();
+    if (current.isEmpty()) return false;
+    while (true) {
+        const QFileInfo info(current);
+        if (!info.isDir() || !rootOwnedNotWritableByOthers(info)) return false;
+        const QString parent = info.dir().absolutePath();
+        if (parent == current) return true;
+        current = parent;
+    }
+}
+
+QString trustedLibraryDirectory() {
+    const QFileInfo info(QStringLiteral("/usr/lib"));
+    const QString canonical = info.canonicalFilePath();
+    if (!info.isDir() || !trustedRootDirectoryChain(canonical)) return {};
+    return canonical;
+}
+
+QString trustedSystemExecutable(const QStringList &candidates) {
+    for (const QString &candidate : candidates) {
+        const QFileInfo info(candidate);
+        const QString canonical = info.canonicalFilePath();
+        if (info.isFile() && info.isExecutable() && rootOwnedNotWritableByOthers(info) &&
+            !canonical.isEmpty() && trustedRootDirectoryChain(QFileInfo(canonical).absolutePath())) {
+            return canonical;
+        }
+    }
+    return {};
+}
+
+QByteArray accessAcl(const QString &path) {
+    const QString getfaclPath = trustedSystemExecutable({QStringLiteral("/usr/bin/getfacl"),
+                                                         QStringLiteral("/bin/getfacl")});
+    if (getfaclPath.isEmpty()) return {};
+
+    QProcess process;
+    process.start(getfaclPath, {QStringLiteral("-cpn"), QStringLiteral("--"), path});
+    if (!process.waitForFinished(1500) || process.exitStatus() != QProcess::NormalExit ||
+        process.exitCode() != 0) {
+        return {};
+    }
+    return process.readAllStandardOutput().trimmed();
+}
+
+bool hasExactUserSearchAcl(const QString &path, uid_t uid) {
+    const QByteArray expected = QByteArrayLiteral("user::rwx\nuser:") + QByteArray::number(uid) +
+                                QByteArrayLiteral(":--x\ngroup::---\nmask::--x\nother::---");
+    return accessAcl(path) == expected;
+}
+
+bool hasOwnerOnlyDirectoryAcl(const QString &path) {
+    return accessAcl(path) == QByteArrayLiteral("user::rwx\ngroup::---\nother::---");
+}
+
+QString beaxtySystemCoreDirectory(bool allowMissing = false) {
+    const QString libDir = trustedLibraryDirectory();
+    if (libDir.isEmpty()) return {};
+
+    const QString expected = QDir(libDir).filePath(QStringLiteral("beaxty-vpn"));
+    const QFileInfo info(expected);
+    if (!info.exists() && !info.isSymLink()) return allowMissing ? expected : QString();
+    if (!info.isDir() || info.canonicalFilePath() != expected ||
+        !trustedRootDirectoryChain(expected) || hasSetIdBits(expected)) {
+        return {};
+    }
+    return expected;
+}
+
+QString userCoreDirectoryPath(bool allowMissing = false) {
+    const QString coreRoot = beaxtySystemCoreDirectory(allowMissing);
+    if (coreRoot.isEmpty()) return {};
+
+    const QString expected = QDir(coreRoot).filePath(QString::number(::getuid()));
+    const QFileInfo info(expected);
+    if (!info.exists() && !info.isSymLink()) return allowMissing ? expected : QString();
+    const QFile::Permissions writableByOthers = QFile::WriteGroup | QFile::WriteOther;
+    const QFile::Permissions accessibleByOthers = QFile::ReadGroup | QFile::WriteGroup | QFile::ExeGroup |
+                                                 QFile::ReadOther | QFile::WriteOther | QFile::ExeOther;
+    if (!info.isDir() || info.ownerId() != 0 || (info.permissions() & writableByOthers) ||
+        hasSetIdBits(expected) || info.canonicalFilePath() != expected ||
+        !trustedRootDirectoryChain(expected) ||
+        (!hasOwnerOnlyDirectoryAcl(expected) && !hasExactUserSearchAcl(expected, ::getuid())) ||
+        (hasOwnerOnlyDirectoryAcl(expected) && (info.permissions() & accessibleByOthers))) {
+        return {};
+    }
+    return expected;
+}
+
+QByteArray sha256File(const QString &path) {
+    QFile file(path);
+    if (!file.open(QIODevice::ReadOnly)) return {};
+
+    QCryptographicHash hash(QCryptographicHash::Sha256);
+    while (!file.atEnd()) {
+        const QByteArray chunk = file.read(256 * 1024);
+        if (chunk.isEmpty() && file.error() != QFileDevice::NoError) return {};
+        hash.addData(chunk);
+    }
+    return hash.result().toHex();
+}
+
+bool hasSetIdBits(const QString &path) {
+    const QByteArray nativePath = QFile::encodeName(path);
+    struct stat st {};
+    return ::stat(nativePath.constData(), &st) != 0 || (st.st_mode & (S_ISUID | S_ISGID)) != 0;
+}
+
+bool hasFileCapabilities(const QString &path) {
+    const QByteArray nativePath = QFile::encodeName(path);
+    const ssize_t size = ::getxattr(nativePath.constData(), "security.capability", nullptr, 0);
+    if (size >= 0) return true;
+    // No attribute (or a filesystem without file-capability support) is safe;
+    // other lookup errors fail closed because the privilege state is unknown.
+    return errno != ENODATA && errno != ENOTSUP;
+}
+
+QString matchingInstalledCorePath(const QString &bundledPath, const QByteArray &expectedDigest = {}) {
+    const QByteArray digest = expectedDigest.isEmpty() ? sha256File(bundledPath) : expectedDigest;
+    if (digest.isEmpty()) return {};
+
+    const QString userDir = userCoreDirectoryPath();
+    if (userDir.isEmpty() || !hasExactUserSearchAcl(userDir, ::getuid())) return {};
+    const QString candidate = QDir(userDir).filePath(
+        QStringLiteral("beaxty-vpn-core-%1").arg(QString::fromLatin1(digest)));
+    const QFileInfo info(candidate);
+    const QFile::Permissions writableByOthers = QFile::WriteGroup | QFile::WriteOther;
+    if (!info.isFile() || !info.isExecutable() || info.ownerId() != 0 ||
+        (info.permissions() & writableByOthers) || hasSetIdBits(candidate) ||
+        info.canonicalFilePath() != candidate || sha256File(candidate) != digest) {
+        return {};
+    }
+    return candidate;
+}
+
+bool hasOnlyNetAdminFileCapability(const QString &path) {
+    const QString getcapPath = trustedSystemExecutable({QStringLiteral("/usr/sbin/getcap"),
+                                                         QStringLiteral("/sbin/getcap"),
+                                                         QStringLiteral("/usr/bin/getcap")});
+    if (getcapPath.isEmpty()) return false;
+
+    QProcess process;
+    process.start(getcapPath, {path});
+    if (!process.waitForFinished(1500) || process.exitStatus() != QProcess::NormalExit ||
+        process.exitCode() != 0) {
+        return false;
+    }
+    const QByteArray expected = QFile::encodeName(path) + QByteArrayLiteral(" cap_net_admin=ep");
+    return process.readAllStandardOutput().trimmed() == expected;
+}
+
+QString installedCorePath(const QString &bundledPath, const QByteArray &expectedDigest = {}) {
+    const QString candidate = matchingInstalledCorePath(bundledPath, expectedDigest);
+    return !candidate.isEmpty() && hasOnlyNetAdminFileCapability(candidate) ? candidate : QString();
+}
+
+} // namespace
 #endif
 
 #if defined(Q_OS_WIN)
@@ -56,6 +280,17 @@ ThroneEngine *ThroneEngine::s_instance = nullptr;
 
 ThroneEngine::ThroneEngine(QObject *parent) : QObject(parent) {
     s_instance = this;
+    m_workerPool.setMaxThreadCount(1);
+    m_routeHealthTimer.setInterval(3000);
+    connect(&m_routeHealthTimer, &QTimer::timeout, this, &ThroneEngine::probeActiveRoute);
+    m_routeConfirmTimer.setSingleShot(true);
+    connect(&m_routeConfirmTimer, &QTimer::timeout, this, &ThroneEngine::probeActiveRoute);
+    m_failoverRetryTimer.setSingleShot(true);
+    connect(&m_failoverRetryTimer, &QTimer::timeout, this, [this]() {
+        if (m_failoverEnabled && m_state == Disconnected && !m_failoverInProgress && !m_cleanedUp) {
+            triggerFailover();
+        }
+    });
 }
 
 ThroneEngine::~ThroneEngine() {
@@ -84,6 +319,15 @@ QString ThroneEngine::stateString() const {
         case Protected:    return QStringLiteral("PROTECTED");
     }
     return QStringLiteral("DISCONNECTED");
+}
+
+QString ThroneEngine::stateLabel() const {
+    switch (m_state) {
+        case Disconnected: return tr("ОТКЛЮЧЕНО");
+        case Connecting:   return tr("ПОДКЛЮЧЕНИЕ");
+        case Protected:    return tr("ЗАЩИЩЕНО");
+    }
+    return tr("ОТКЛЮЧЕНО");
 }
 
 bool ThroneEngine::isConnected() const {
@@ -157,6 +401,102 @@ void ThroneEngine::setFailoverEnabled(bool enabled) {
     m_failoverEnabled = enabled;
     AppPrefs::setBool(QStringLiteral("failover_enabled"), enabled);
     emit failoverEnabledChanged(enabled);
+    if (!enabled) m_failoverRetryTimer.stop();
+    m_routeFailureDetector.reset();
+    m_routeConfirmTimer.stop();
+    configureFailoverMonitoring();
+}
+
+QVariantList ThroneEngine::failoverServerIds() const {
+    QVariantList result;
+    result.reserve(m_failoverServerIds.size());
+    for (int id : m_failoverServerIds) result.append(id);
+    return result;
+}
+
+int ThroneEngine::failoverStrategy() const {
+    return m_failoverStrategy;
+}
+
+void ThroneEngine::setFailoverStrategy(int strategy) {
+    const int normalized = qBound(0, strategy, 1);
+    if (m_failoverStrategy == normalized) return;
+    m_failoverStrategy = normalized;
+    AppPrefs::setInt(QStringLiteral("failover_strategy"), normalized);
+    emit failoverStrategyChanged(normalized);
+}
+
+int ThroneEngine::activeServerId() const {
+    return m_activeServerId;
+}
+
+bool ThroneEngine::isFailoverServer(int profileId) const {
+    return m_failoverServerIds.contains(profileId);
+}
+
+void ThroneEngine::setFailoverServer(int profileId, bool enabled) {
+    if (profileId < 0 || !Configs::dataManager || !Configs::dataManager->profilesRepo ||
+        !Configs::dataManager->profilesRepo->GetProfile(profileId)) {
+        return;
+    }
+
+    const bool alreadyEnabled = m_failoverServerIds.contains(profileId);
+    if (alreadyEnabled == enabled) return;
+    if (enabled) {
+        m_failoverServerIds.append(profileId);
+    } else {
+        m_failoverServerIds.removeAll(profileId);
+    }
+    m_failoverRetryDelayMs = 30000;
+    m_routeFailureDetector.reset();
+    m_routeConfirmTimer.stop();
+    if (m_failoverServerIds.isEmpty()) m_failoverRetryTimer.stop();
+
+    QJsonArray ids;
+    for (int id : m_failoverServerIds) ids.append(id);
+    AppPrefs::setString(QStringLiteral("failover_server_ids"),
+                        QString::fromUtf8(QJsonDocument(ids).toJson(QJsonDocument::Compact)));
+    emit failoverServerIdsChanged();
+    configureFailoverMonitoring();
+}
+
+void ThroneEngine::moveFailoverServer(int profileId, int offset) {
+    if (offset != -1 && offset != 1) return;
+    const int index = m_failoverServerIds.indexOf(profileId);
+    const int target = index + offset;
+    if (index < 0 || target < 0 || target >= m_failoverServerIds.size()) return;
+
+    m_failoverServerIds.swapItemsAt(index, target);
+    QJsonArray ids;
+    for (int id : m_failoverServerIds) ids.append(id);
+    AppPrefs::setString(QStringLiteral("failover_server_ids"),
+                        QString::fromUtf8(QJsonDocument(ids).toJson(QJsonDocument::Compact)));
+    emit failoverServerIdsChanged();
+}
+
+bool ThroneEngine::hasEligibleFallbackServers() const {
+    if (!m_failoverEnabled || m_failoverServerIds.isEmpty() || !ConfigAdapter::instance()) return false;
+    const int currentId = m_activeServerId >= 0 ? m_activeServerId : ConfigAdapter::instance()->selectedServerId();
+    for (int id : m_failoverServerIds) {
+        if (id != currentId && Configs::dataManager && Configs::dataManager->profilesRepo &&
+            Configs::dataManager->profilesRepo->GetProfile(id)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+void ThroneEngine::configureFailoverMonitoring() {
+    if (m_state == Protected && hasEligibleFallbackServers() && !m_failoverInProgress) {
+        if (!m_routeHealthTimer.isActive()) {
+            m_routeFailureDetector.reset();
+            m_routeHealthTimer.start();
+        }
+    } else {
+        m_routeHealthTimer.stop();
+        m_routeConfirmTimer.stop();
+        if (!m_routeProbeInFlight.load(std::memory_order_acquire)) m_routeFailureDetector.reset();
+    }
 }
 
 void ThroneEngine::persistSettings() {
@@ -167,6 +507,15 @@ void ThroneEngine::persistSettings() {
 
 QString ThroneEngine::statusMessage() const {
     return m_statusMessage;
+}
+
+QString ThroneEngine::localizedStatusMessage() const {
+    const QByteArray source = m_statusMessage.toUtf8();
+    return tr(source.constData());
+}
+
+QString ThroneEngine::connectionModeLabel() const {
+    return isTunModeEnabled() ? tr("TUN АКТИВЕН") : tr("ТОЛЬКО ПРОКСИ");
 }
 
 QString ThroneEngine::networkStackLabel() const {
@@ -392,13 +741,29 @@ void ThroneEngine::exportSupportReport() {
 
     out << "\n================== END OF REPORT ==================\n";
 
-    QFile targetFile(savePath);
-    if (targetFile.open(QIODevice::WriteOnly | QIODevice::Text)) {
-        QTextStream writer(&targetFile);
-        writer << report;
-        targetFile.close();
-        if (ToastManager::instance()) {
-            ToastManager::instance()->showSuccess(tr("Диагностический отчет сохранен"));
+    QSaveFile targetFile(savePath);
+    if (targetFile.open(QIODevice::WriteOnly)) {
+#if defined(Q_OS_UNIX)
+        // Diagnostic reports include host/network details. Write the temporary
+        // file privately before committing it atomically at the chosen path.
+        if (!targetFile.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner)) {
+            targetFile.cancelWriting();
+            if (ToastManager::instance()) {
+                ToastManager::instance()->showError(tr("Ошибка защиты диагностического отчета"));
+            }
+            return;
+        }
+#endif
+        const QByteArray reportUtf8 = report.toUtf8();
+        if (targetFile.write(reportUtf8) == reportUtf8.size() && targetFile.commit()) {
+            if (ToastManager::instance()) {
+                ToastManager::instance()->showSuccess(tr("Диагностический отчет сохранен"));
+            }
+        } else {
+            targetFile.cancelWriting();
+            if (ToastManager::instance()) {
+                ToastManager::instance()->showError(tr("Ошибка сохранения отчета"));
+            }
         }
     } else {
         if (ToastManager::instance()) {
@@ -420,6 +785,7 @@ void ThroneEngine::setState(State s) {
         }
         emit statusMessageChanged(m_statusMessage);
     }
+    configureFailoverMonitoring();
 }
 
 bool ThroneEngine::initialize(const QString &dbPath, const QString &coreBinaryPath) {
@@ -461,7 +827,22 @@ bool ThroneEngine::initialize(const QString &dbPath, const QString &coreBinaryPa
 
         m_autoConnect = AppPrefs::getBool(QStringLiteral("auto_connect"), false);
         m_killSwitch = AppPrefs::getBool(QStringLiteral("kill_switch"), false);
-        m_failoverEnabled = AppPrefs::getBool(QStringLiteral("failover_enabled"), true);
+        m_failoverEnabled = AppPrefs::getBool(QStringLiteral("failover_enabled"), false);
+        m_failoverStrategy = qBound(0, AppPrefs::getInt(QStringLiteral("failover_strategy"), 0), 1);
+        m_failoverServerIds.clear();
+        const auto storedFailoverIds = QJsonDocument::fromJson(
+            AppPrefs::getString(QStringLiteral("failover_server_ids"), QStringLiteral("[]")).toUtf8());
+        if (storedFailoverIds.isArray() && Configs::dataManager->profilesRepo) {
+            QSet<int> seen;
+            for (const auto &value : storedFailoverIds.array()) {
+                if (!value.isDouble()) continue;
+                const int id = value.toInt(-1);
+                if (id >= 0 && !seen.contains(id) && Configs::dataManager->profilesRepo->GetProfile(id)) {
+                    seen.insert(id);
+                    m_failoverServerIds.append(id);
+                }
+            }
+        }
     }
 
     // Initialize API Client
@@ -474,9 +855,10 @@ bool ThroneEngine::initialize(const QString &dbPath, const QString &coreBinaryPa
         qDebug().noquote() << "[ThroneCore]" << msg;
     };
 
-    // Locate core binary
-    m_coreBinaryPath = coreBinaryPath;
-    if (m_coreBinaryPath.isEmpty()) {
+    // Locate the bundled core first. Linux's optional privileged copy is kept
+    // under a root-only per-UID directory; never run the legacy SUID path.
+    m_bundledCoreBinaryPath = coreBinaryPath;
+    if (m_bundledCoreBinaryPath.isEmpty()) {
         QString appDir = QCoreApplication::applicationDirPath();
         QString binName = QStringLiteral("/beaxty-core");
 #ifdef Q_OS_WIN
@@ -484,17 +866,61 @@ bool ThroneEngine::initialize(const QString &dbPath, const QString &coreBinaryPa
 #endif
         QString candidate1 = appDir + binName;
         QString candidate2 = appDir + QStringLiteral("/../bin") + binName;
+#if !defined(Q_OS_LINUX)
         QString candidate3 = QStringLiteral("/usr/lib/beaxty-vpn") + binName;
+#endif
 
 #ifdef Q_OS_MAC
         QString candidateMac = appDir + QStringLiteral("/../Resources/beaxty-core");
-        if (QFile::exists(candidateMac)) m_coreBinaryPath = candidateMac;
+        if (QFile::exists(candidateMac)) m_bundledCoreBinaryPath = candidateMac;
         else
 #endif
-        if (QFile::exists(candidate1)) m_coreBinaryPath = candidate1;
-        else if (QFile::exists(candidate2)) m_coreBinaryPath = candidate2;
-        else if (QFile::exists(candidate3)) m_coreBinaryPath = candidate3;
+        if (QFile::exists(candidate1)) m_bundledCoreBinaryPath = candidate1;
+        else if (QFile::exists(candidate2)) m_bundledCoreBinaryPath = candidate2;
+#if !defined(Q_OS_LINUX)
+        else if (QFile::exists(candidate3)) m_bundledCoreBinaryPath = candidate3;
+#endif
     }
+
+    m_coreBinaryPath = m_bundledCoreBinaryPath;
+#if defined(Q_OS_LINUX)
+    if (!m_bundledCoreBinaryPath.isEmpty() && QFileInfo::exists(m_bundledCoreBinaryPath) &&
+        (hasSetIdBits(m_bundledCoreBinaryPath) || hasFileCapabilities(m_bundledCoreBinaryPath))) {
+        qCritical() << "[ThroneEngine] Refusing to run a bundled network core with SUID/SGID bits or file capabilities.";
+        m_unsafeBundledCoreRejected = true;
+        m_bundledCoreBinaryPath.clear();
+        m_coreBinaryPath.clear();
+    }
+    const QString libDir = trustedLibraryDirectory();
+    if (!libDir.isEmpty()) {
+        const QString legacyCore = QDir(libDir).filePath(QStringLiteral("beaxty-vpn/beaxty-core"));
+        if (QFileInfo::exists(legacyCore) && (hasSetIdBits(legacyCore) || hasFileCapabilities(legacyCore))) {
+            qCritical() << "[ThroneEngine] Found legacy privileged core at:" << legacyCore;
+            m_legacySystemCoreDetected = true;
+        }
+    }
+    const QString installedDigest = AppPrefs::getString(QStringLiteral("linux_core_sha256"));
+    if (QRegularExpression(QStringLiteral("^[a-f0-9]{64}$")).match(installedDigest).hasMatch()) {
+        const QString userDir = userCoreDirectoryPath();
+        const QString expectedPath = userDir.isEmpty() ? QString() : QDir(userDir).filePath(
+            QStringLiteral("beaxty-vpn-core-%1").arg(installedDigest));
+        if (!expectedPath.isEmpty() && QFileInfo::exists(expectedPath)) {
+            const QByteArray currentDigest = sha256File(m_bundledCoreBinaryPath);
+            if (currentDigest == installedDigest.toLatin1()) {
+                const QString privilegedCore = installedCorePath(m_bundledCoreBinaryPath, currentDigest);
+                if (!privilegedCore.isEmpty()) {
+                    m_coreBinaryPath = privilegedCore;
+                } else {
+                    AppPrefs::setString(QStringLiteral("linux_core_sha256"), QString());
+                }
+            } else {
+                AppPrefs::setString(QStringLiteral("linux_core_sha256"), QString());
+            }
+        } else {
+            AppPrefs::setString(QStringLiteral("linux_core_sha256"), QString());
+        }
+    }
+#endif
 
     m_initialized = true;
 
@@ -509,6 +935,9 @@ bool ThroneEngine::initialize(const QString &dbPath, const QString &coreBinaryPa
 }
 
 bool ThroneEngine::spawnCoreDaemon() {
+    ++m_rpcGeneration;
+    m_rpcConnected.store(false, std::memory_order_release);
+
     if (m_coreProcess) {
         m_coreProcess->disconnect(this);
         if (m_coreProcess->state() != QProcess::NotRunning) {
@@ -520,13 +949,6 @@ bool ThroneEngine::spawnCoreDaemon() {
         }
         delete m_coreProcess;
         m_coreProcess = nullptr;
-    }
-
-    if (m_rpcSocket) {
-        m_rpcSocket->disconnect(this);
-        m_rpcSocket->close();
-        delete m_rpcSocket;
-        m_rpcSocket = nullptr;
     }
 
     m_socketPath = QStringLiteral("beaxtyIPC-%1").arg(QUuid::createUuid().toString(QUuid::WithoutBraces));
@@ -547,10 +969,37 @@ bool ThroneEngine::spawnCoreDaemon() {
     m_socketFullPath = fullSocketName;
 
     connect(m_localServer, &QLocalServer::newConnection, this, [this]() {
-        m_rpcSocket = m_localServer->nextPendingConnection();
+        QLocalSocket *socket = m_localServer->nextPendingConnection();
+        if (!socket) return;
+#if defined(Q_OS_LINUX)
+        const qint64 expectedCorePid = m_coreProcess && m_coreProcess->state() == QProcess::Running
+                                          ? m_coreProcess->processId()
+                                          : 0;
+        if (!LocalPeerCredentials::isExpectedCorePeer(socket->socketDescriptor(), expectedCorePid)) {
+            qWarning() << "[ThroneEngine] Rejected local IPC peer that is not the active core child.";
+            socket->abort();
+            socket->deleteLater();
+            return;
+        }
+#endif
+        const uint64_t generation = ++m_rpcGeneration;
+        connect(socket, &QLocalSocket::disconnected, this, [this, generation]() {
+            // An old socket may report disconnect after a replacement was
+            // accepted. Do not let it clear the newer connection state.
+            if (m_rpcGeneration == generation) {
+                m_rpcConnected.store(false, std::memory_order_release);
+            }
+        });
         qDebug() << "[ThroneEngine] Core daemon connected to IPC server socket!";
         if (API::defaultClient) {
-            API::defaultClient->Reconnect(m_rpcSocket);
+            // Reconnect detaches the socket and transfers it to RPC's I/O
+            // thread. ThroneEngine must not close/delete that socket itself.
+            API::defaultClient->Reconnect(socket);
+            m_rpcConnected.store(true, std::memory_order_release);
+        } else {
+            socket->deleteLater();
+            m_rpcConnected.store(false, std::memory_order_release);
+            return;
         }
         if (Configs::dataManager && Configs::dataManager->settingsRepo) {
             Configs::dataManager->settingsRepo->core_running = true;
@@ -607,6 +1056,18 @@ bool ThroneEngine::connectToCoreRpc() {
     return true;
 }
 
+bool ThroneEngine::hasVerifiedTunCore() const {
+#if defined(Q_OS_LINUX)
+    if (m_bundledCoreBinaryPath.isEmpty() || m_coreBinaryPath.isEmpty()) return false;
+    const QByteArray digest = sha256File(m_bundledCoreBinaryPath);
+    if (digest.isEmpty()) return false;
+    const QString verifiedPath = installedCorePath(m_bundledCoreBinaryPath, digest);
+    return !verifiedPath.isEmpty() && QFileInfo(m_coreBinaryPath).canonicalFilePath() == verifiedPath;
+#else
+    return true;
+#endif
+}
+
 void ThroneEngine::toggleConnect() {
     if (m_state == Protected || m_state == Connecting) {
         stopConnection();
@@ -615,8 +1076,61 @@ void ThroneEngine::toggleConnect() {
     }
 }
 
+void ThroneEngine::connectAfterTunPermissionConsent() {
+    if (m_cleanedUp || m_state == Protected || m_state == Connecting) return;
+    if (!isTunModeEnabled()) {
+        startConnection();
+        return;
+    }
+#if defined(Q_OS_LINUX)
+    if (hasVerifiedTunCore()) {
+        startConnection();
+        return;
+    }
+
+    // The core reconnect callback starts the pending connection after the
+    // authorized copy is installed and relaunched.
+    m_userWantsConnect = true;
+    requestElevateCapabilities();
+#else
+    startConnection();
+#endif
+}
+
 void ThroneEngine::startConnection() {
+    if (m_cleanedUp) return;
     if (m_state == Protected || m_state == Connecting) return;
+    m_failoverRetryTimer.stop();
+    if (m_unsafeBundledCoreRejected) {
+        if (m_failoverInProgress) {
+            finishFailoverFailure(tr("Сетевое ядро отклонило запуск резервного подключения из-за небезопасных прав."));
+            return;
+        }
+        const QString error = QStringLiteral("Обнаружены старые привилегии сетевого ядра. Пересоберите core без SUID и file capabilities.");
+        if (ToastManager::instance()) ToastManager::instance()->showError(error);
+        emit errorOccurred(error);
+        return;
+    }
+#if defined(Q_OS_LINUX)
+    if (isTunModeEnabled() && QFileInfo::exists(m_bundledCoreBinaryPath)) {
+        if (m_capabilitySetupInProgress) {
+            // The user may press Connect while authorizing from Settings; queue
+            // one connection behind the same in-flight setup instead of opening
+            // a second consent flow.
+            m_userWantsConnect = true;
+            return;
+        }
+        if (!hasVerifiedTunCore()) {
+            if (m_failoverInProgress) {
+                finishFailoverFailure(tr("Для резервного подключения не подтверждены права TUN. Проверьте их в настройках."));
+                return;
+            }
+            m_userWantsConnect = false;
+            emit tunPermissionConsentRequested();
+            return;
+        }
+    }
+#endif
     m_userWantsConnect = true;
 
     // The core can exit independently of the GUI. Recreate its IPC endpoint
@@ -624,6 +1138,10 @@ void ThroneEngine::startConnection() {
     // against a dead socket and can never recover.
     if (!m_coreProcess || m_coreProcess->state() == QProcess::NotRunning) {
         if (!spawnCoreDaemon()) {
+            if (m_failoverInProgress) {
+                finishFailoverFailure(tr("Не удалось запустить сетевое ядро для резервного подключения."));
+                return;
+            }
             m_userWantsConnect = false;
             setState(Disconnected);
             const QString error = QStringLiteral("Core daemon could not be started.");
@@ -637,7 +1155,7 @@ void ThroneEngine::startConnection() {
     // local socket. Wait for newConnection instead of reporting a false RPC
     // failure; that callback will invoke doStartConnection once the socket is
     // ready.
-    if (!m_rpcSocket || !m_rpcSocket->isOpen()) {
+    if (!m_rpcConnected.load(std::memory_order_acquire)) {
         setState(Connecting);
         m_statusMessage = QStringLiteral("Connecting to core...");
         emit statusMessageChanged(m_statusMessage);
@@ -649,13 +1167,7 @@ void ThroneEngine::startConnection() {
 void ThroneEngine::doStartConnection() {
     m_intentionalStop = false;
     uint64_t seq = ++m_connectSeq;
-    if (m_failoverAttempts == 0) {
-        m_failedServerIds.clear();
-    }
-    if (m_killSwitchEngaged) {
-        applyKillSwitch(false);
-    }
-
+    const bool isFailoverAttempt = m_failoverInProgress;
     // Throne's config generator reads the runtime flag, not the persisted one.
     if (Configs::dataManager && Configs::dataManager->settingsRepo) {
         Configs::dataManager->settingsRepo->spmode_vpn =
@@ -666,8 +1178,16 @@ void ThroneEngine::doStartConnection() {
     m_statusMessage = QStringLiteral("Connecting...");
     emit statusMessageChanged(m_statusMessage);
 
-    int profileId = ConfigAdapter::instance()->selectedServerId();
+    int profileId = m_activeServerOverride >= 0
+                        ? m_activeServerOverride
+                        : (ConfigAdapter::instance() ? ConfigAdapter::instance()->selectedServerId() : -1);
     if (profileId < 0) {
+        if (isFailoverAttempt) {
+            setState(Disconnected);
+            tryNextFailoverCandidate();
+            return;
+        }
+        m_userWantsConnect = false;
         setState(Disconnected);
         QString err = QStringLiteral("No server selected. Please choose a node.");
         if (ToastManager::instance()) ToastManager::instance()->showError(err);
@@ -676,13 +1196,20 @@ void ThroneEngine::doStartConnection() {
     }
 
     // Run config building and RPC Start asynchronously in background thread
-    QThreadPool::globalInstance()->start([this, profileId, seq]() {
+    m_workerPool.start([this, profileId, seq, isFailoverAttempt]() {
         if (m_connectSeq != seq || !m_userWantsConnect || m_intentionalStop) {
             return;
         }
 
         if (!Configs::dataManager || !Configs::dataManager->profilesRepo) {
-            QMetaObject::invokeMethod(this, [this]() {
+            QMetaObject::invokeMethod(this, [this, seq, isFailoverAttempt]() {
+                if (m_connectSeq != seq) return;
+                if (isFailoverAttempt && m_failoverInProgress) {
+                    setState(Disconnected);
+                    tryNextFailoverCandidate();
+                    return;
+                }
+                m_userWantsConnect = false;
                 setState(Disconnected);
                 QString err = QStringLiteral("Database not initialized.");
                 if (ToastManager::instance()) ToastManager::instance()->showError(err);
@@ -693,7 +1220,14 @@ void ThroneEngine::doStartConnection() {
 
         auto profile = Configs::dataManager->profilesRepo->GetProfile(profileId);
         if (!profile) {
-            QMetaObject::invokeMethod(this, [this]() {
+            QMetaObject::invokeMethod(this, [this, seq, isFailoverAttempt]() {
+                if (m_connectSeq != seq) return;
+                if (isFailoverAttempt && m_failoverInProgress) {
+                    setState(Disconnected);
+                    tryNextFailoverCandidate();
+                    return;
+                }
+                m_userWantsConnect = false;
                 setState(Disconnected);
                 QString err = QStringLiteral("Selected server node not found in database.");
                 if (ToastManager::instance()) ToastManager::instance()->showError(err);
@@ -711,8 +1245,20 @@ void ThroneEngine::doStartConnection() {
         }
 
         if (!result->error.isEmpty()) {
-            qWarning() << "[ThroneEngine] BuildConfig error:" << result->error;
-            QMetaObject::invokeMethod(this, [this, err = result->error]() {
+            if (isFailoverAttempt) {
+                qWarning() << "[ThroneEngine] Fallback configuration could not be built";
+            } else {
+                qWarning() << "[ThroneEngine] BuildConfig error:" << result->error;
+            }
+            QMetaObject::invokeMethod(this, [this, seq, isFailoverAttempt, err = result->error]() {
+                if (m_connectSeq != seq) return;
+                if (isFailoverAttempt && m_failoverInProgress) {
+                    qWarning() << "[ThroneEngine] Fallback configuration failed:" << err;
+                    setState(Disconnected);
+                    tryNextFailoverCandidate();
+                    return;
+                }
+                m_userWantsConnect = false;
                 setState(Disconnected);
                 QString userErr = QStringLiteral("Config error: %1").arg(err);
                 if (ToastManager::instance()) ToastManager::instance()->showError(userErr);
@@ -752,15 +1298,29 @@ void ThroneEngine::doStartConnection() {
 
         bool rpcOK = false;
         QString rpcErr;
-        if (API::defaultClient && m_rpcSocket && m_rpcSocket->isOpen()) {
+        if (API::defaultClient && m_rpcConnected.load(std::memory_order_acquire)) {
             rpcErr = API::defaultClient->Start(&rpcOK, req);
         } else {
             rpcOK = false;
             rpcErr = QStringLiteral("Core daemon RPC is not connected. Check if beaxty-core is running.");
         }
 
+        int verifiedLatency = 0;
+        if (rpcOK && isFailoverAttempt) {
+            if (!testCurrentCoreRouteBlocking(1400, &verifiedLatency)) {
+                bool stopped = false;
+                if (API::defaultClient && m_rpcConnected.load(std::memory_order_acquire)) {
+                    API::defaultClient->Stop(&stopped);
+                }
+                rpcOK = false;
+                // Keep remote error text out of logs: a user-defined probe URL
+                // can contain private path or query data.
+                rpcErr = QStringLiteral("Fallback route verification failed");
+            }
+        }
+
         if (m_connectSeq != seq || !m_userWantsConnect || m_intentionalStop) {
-            if (rpcOK && API::defaultClient && m_rpcSocket && m_rpcSocket->isOpen()) {
+            if (rpcOK && API::defaultClient && m_rpcConnected.load(std::memory_order_acquire)) {
                 bool stopped = false;
                 API::defaultClient->Stop(&stopped);
             }
@@ -770,29 +1330,47 @@ void ThroneEngine::doStartConnection() {
         auto chainGroups = result->chainGroups;
 
         // Post completion to main GUI thread
-        QMetaObject::invokeMethod(this, [this, seq, rpcOK, rpcErr, profileName, chainGroups]() {
+        QMetaObject::invokeMethod(this, [this, seq, rpcOK, rpcErr, profileName, profileId,
+                                         verifiedLatency, isFailoverAttempt, chainGroups]() {
             if (m_connectSeq != seq || m_state != Connecting || !m_userWantsConnect) {
-                // Connection was stopped/cancelled while start was in-flight
-                if (rpcOK && rpcErr.isEmpty() && API::defaultClient && m_rpcSocket && m_rpcSocket->isOpen()) {
-                    bool stopped = false;
-                    API::defaultClient->Stop(&stopped);
-                }
+                // A Stop is already queued on the serialized worker. Calling
+                // Stop from this delayed GUI callback could race a newer Start.
                 return;
             }
 
             if (!rpcOK || !rpcErr.isEmpty()) {
+                if (isFailoverAttempt && m_failoverInProgress) {
+                    qWarning() << "[ThroneEngine] Fallback core start failed";
+                    setState(Disconnected);
+                    tryNextFailoverCandidate();
+                    return;
+                }
                 qWarning() << "[ThroneEngine] Core Start failed, rpcOK:" << rpcOK << "err:" << rpcErr;
                 setState(Disconnected);
 
                 QString lower = rpcErr.toLower();
                 QString userErr = rpcErr.isEmpty() ? QStringLiteral("Failed to start VPN tunnel.") : rpcErr;
-                if (lower.contains("operation not permitted") || 
-                    lower.contains("permission denied") || 
-                    lower.contains("cap_net_admin") || 
-                    lower.contains("not authorized")) {
-                    userErr = QStringLiteral("Требуются права суперпользователя для настройки TUN/маршрутизации.");
-                    requestElevateCapabilities();
+#if defined(Q_OS_LINUX)
+                const auto *settings = Configs::dataManager && Configs::dataManager->settingsRepo
+                                           ? Configs::dataManager->settingsRepo.get()
+                                           : nullptr;
+                const bool tunEnabled = settings && settings->remember_tun;
+                const bool needsTunCapability = tunEnabled &&
+                    (lower.contains("operation not permitted") ||
+                     lower.contains("permission denied") ||
+                     lower.contains("cap_net_admin") ||
+                     lower.contains("/dev/net/tun") ||
+                     lower.contains("create tun"));
+                if (needsTunCapability) {
+                    userErr = QStringLiteral("Для TUN не хватает права CAP_NET_ADMIN. Подтвердите его настройку, чтобы продолжить подключение.");
+                    m_userWantsConnect = false;
+                    emit tunPermissionConsentRequested();
+                } else {
+                    m_userWantsConnect = false;
                 }
+#else
+                m_userWantsConnect = false;
+#endif
 
                 if (ToastManager::instance()) {
                     ToastManager::instance()->showError(userErr);
@@ -804,8 +1382,8 @@ void ThroneEngine::doStartConnection() {
             // Initialize traffic groups before switching to Protected or running loop
             if (Stats::trafficLooper) {
                 Stats::trafficLooper->SetChainGroups(chainGroups);
-                Stats::trafficLooper->stop_requested = false;
-                Stats::trafficLooper->loop_enabled = true;
+                Stats::trafficLooper->stop_requested.store(false, std::memory_order_release);
+                Stats::trafficLooper->loop_enabled.store(true, std::memory_order_release);
                 if (!m_trafficThread || !m_trafficThread->isRunning()) {
                     m_trafficThread = QThread::create([] {
                         Stats::trafficLooper->Loop();
@@ -815,14 +1393,28 @@ void ThroneEngine::doStartConnection() {
                 }
             }
 
+            m_activeServerId = profileId;
+            emit activeServerChanged(m_activeServerId);
+            if (isFailoverAttempt && m_failoverInProgress) {
+                m_failoverInProgress = false;
+                m_failoverCandidateIds.clear();
+                m_failoverCandidateIndex = 0;
+                m_routeFailureDetector.reset();
+                m_failedServerIds.clear();
+                m_failoverRetryDelayMs = 30000;
+                if (ConfigAdapter::instance() && verifiedLatency > 0) {
+                    ConfigAdapter::instance()->updateServerPing(profileId, verifiedLatency);
+                }
+            }
             setState(Protected);
+            if (m_killSwitchEngaged) applyKillSwitch(false);
 #if defined(Q_OS_WIN)
             setWindowsDnsSmartNameResolution(true);
 #endif
-            m_failoverAttempts = 0;
-            m_failedServerIds.clear();
             if (ToastManager::instance()) {
-                ToastManager::instance()->showSuccess(QStringLiteral("Connected to %1").arg(profileName));
+                ToastManager::instance()->showSuccess(
+                    isFailoverAttempt ? tr("Автоматически переключено на %1").arg(profileName)
+                                      : QStringLiteral("Connected to %1").arg(profileName));
             }
         });
     });
@@ -830,10 +1422,10 @@ void ThroneEngine::doStartConnection() {
 
 void ThroneEngine::stopTrafficLooper() {
     if (Stats::trafficLooper) {
-        Stats::trafficLooper->loop_enabled = false;
+        Stats::trafficLooper->loop_enabled.store(false, std::memory_order_release);
         // Loop() polls stop_requested; quit() would be a no-op on a QThread::create
         // thread because it runs no event loop.
-        Stats::trafficLooper->stop_requested = true;
+        Stats::trafficLooper->stop_requested.store(true, std::memory_order_release);
     }
 
     if (m_trafficThread) {
@@ -854,7 +1446,17 @@ void ThroneEngine::stopConnection() {
     ++m_connectSeq;
     m_intentionalStop = true;
     m_userWantsConnect = false;
-    m_failoverAttempts = 0;
+    m_failoverInProgress = false;
+    m_failoverCandidateIds.clear();
+    m_failoverCandidateIndex = 0;
+    m_activeServerOverride = -1;
+    if (m_activeServerId >= 0) {
+        m_activeServerId = -1;
+        emit activeServerChanged(m_activeServerId);
+    }
+    m_routeHealthTimer.stop();
+    m_routeConfirmTimer.stop();
+    m_routeFailureDetector.reset();
     m_failedServerIds.clear();
     stopTrafficLooper();
 
@@ -871,9 +1473,9 @@ void ThroneEngine::stopConnection() {
         applyKillSwitch(false);
     }
 
-    QThreadPool::globalInstance()->start([this]() {
+    m_workerPool.start([this]() {
         bool rpcOK = false;
-        if (API::defaultClient && m_rpcSocket && m_rpcSocket->isOpen()) {
+        if (API::defaultClient && m_rpcConnected.load(std::memory_order_acquire)) {
             API::defaultClient->Stop(&rpcOK);
         }
     });
@@ -884,6 +1486,7 @@ void ThroneEngine::stopConnection() {
 }
 
 void ThroneEngine::restartConnection() {
+    if (m_cleanedUp) return;
     if (m_state == Disconnected) return;
 
     ++m_connectSeq;
@@ -895,9 +1498,9 @@ void ThroneEngine::restartConnection() {
 
     stopTrafficLooper();
 
-    QThreadPool::globalInstance()->start([this]() {
+    m_workerPool.start([this]() {
         bool rpcOK = false;
-        if (API::defaultClient && m_rpcSocket && m_rpcSocket->isOpen()) {
+        if (API::defaultClient && m_rpcConnected.load(std::memory_order_acquire)) {
             API::defaultClient->Stop(&rpcOK);
         }
         // Yield to allow OS kernel to cleanly tear down previous TUN interface
@@ -921,6 +1524,17 @@ void ThroneEngine::notifyMinimizedToTray() {
 }
 
 void ThroneEngine::runPostStartupTasks() {
+    if (m_legacySystemCoreDetected && ToastManager::instance()) {
+        ToastManager::instance()->showError(
+            QStringLiteral("Обнаружена старая привилегированная копия core в /usr/lib. Удалите у неё SUID и file capabilities."));
+    }
+    if (m_unsafeBundledCoreRejected) {
+        if (ToastManager::instance()) {
+            ToastManager::instance()->showError(
+                QStringLiteral("Обнаружены старые привилегии сетевого ядра. Пересоберите core без SUID и file capabilities."));
+        }
+        return;
+    }
     if (!m_autoConnect) return;
     if (!ConfigAdapter::instance() || ConfigAdapter::instance()->selectedServerId() < 0) {
         qDebug() << "[ThroneEngine] Auto-connect is on but no node is selected; skipping.";
@@ -940,16 +1554,11 @@ void ThroneEngine::applyKillSwitch(bool engaged) {
     m_killSwitchEngaged = engaged;
 
     if (engaged) {
-        m_statusMessage = QStringLiteral("Kill switch: tunnel lost, traffic is blocked");
-        emit statusMessageChanged(m_statusMessage);
-        if (ToastManager::instance()) {
-            ToastManager::instance()->showError(
-                QStringLiteral("Соединение с туннелем потеряно. Kill switch: весь трафик заблокирован."));
-        }
-        emit killSwitchTripped();
-
-        // 1. If core daemon is running and RPC is connected, send a blackhole config
-        if (API::defaultClient && m_rpcSocket && m_rpcSocket->isOpen()) {
+        bool coreAcceptedBlockConfig = false;
+        // This can request an app-level block only while the user-owned core is
+        // still alive. It does not establish or verify an OS firewall rule.
+        if (m_coreProcess && m_coreProcess->state() != QProcess::NotRunning &&
+            API::defaultClient && m_rpcConnected.load(std::memory_order_acquire)) {
             QJsonObject blackholeConfig{
                 {"inbounds", QJsonArray{
                     QJsonObject{
@@ -978,150 +1587,222 @@ void ThroneEngine::applyKillSwitch(bool engaged) {
             req.core_config = QJsonObject2QString(blackholeConfig, true).toStdString();
             req.tun_ipv4_cidr = "172.19.0.1/30";
             bool ok = false;
-            API::defaultClient->Start(&ok, req);
+            const QString error = API::defaultClient->Start(&ok, req);
+            coreAcceptedBlockConfig = ok && error.isEmpty();
         }
 
-        // 2. On Linux, enforce kernel blackhole default route
-#if defined(Q_OS_LINUX)
-        QProcess::execute(QStringLiteral("ip"), {QStringLiteral("route"), QStringLiteral("add"), QStringLiteral("blackhole"), QStringLiteral("default"), QStringLiteral("metric"), QStringLiteral("1")});
-#endif
+        m_statusMessage = coreAcceptedBlockConfig
+                              ? QStringLiteral("Core block requested; system firewall is unverified")
+                              : QStringLiteral("VPN tunnel lost; system traffic may be unprotected");
+        emit statusMessageChanged(m_statusMessage);
+        if (ToastManager::instance()) {
+            ToastManager::instance()->showError(
+                coreAcceptedBlockConfig
+                    ? QStringLiteral("Туннель потерян. Ядро приняло запрос блокировки, но системная блокировка трафика не проверена.")
+                    : QStringLiteral("Туннель потерян. Системный трафик может идти через обычную сеть.") );
+        }
+        emit killSwitchTripped();
     } else {
         m_statusMessage = stateString() == QStringLiteral("PROTECTED")
                               ? QStringLiteral("Protected - Tunnel Active")
                               : QStringLiteral("Disconnected");
         emit statusMessageChanged(m_statusMessage);
-
-#if defined(Q_OS_LINUX)
-        QProcess::execute(QStringLiteral("ip"), {QStringLiteral("route"), QStringLiteral("del"), QStringLiteral("blackhole"), QStringLiteral("default"), QStringLiteral("metric"), QStringLiteral("1")});
-#endif
     }
 }
 
 void ThroneEngine::requestElevateCapabilities() {
-    QString appDir = QCoreApplication::applicationDirPath();
-    QString corePath = m_coreBinaryPath;
-    if (corePath.isEmpty() || !QFile::exists(corePath)) {
-        corePath = Configs::FindCoreRealPath();
-    }
-    if (corePath.isEmpty() || !QFile::exists(corePath)) {
-        QString binName = QStringLiteral("/beaxty-core");
-#ifdef Q_OS_WIN
-        binName += QStringLiteral(".exe");
-#endif
-        QString c1 = appDir + binName;
-        QString c2 = appDir + QStringLiteral("/../bin") + binName;
-        QString c3 = QStringLiteral("/usr/lib/beaxty-vpn") + binName;
-        if (QFile::exists(c1)) corePath = c1;
-        else if (QFile::exists(c2)) corePath = c2;
-        else if (QFile::exists(c3)) corePath = c3;
-    }
-
-    QFileInfo coreInfo(corePath);
-    QString canonicalCore = coreInfo.canonicalFilePath();
-    if (canonicalCore.isEmpty() || !coreInfo.exists() || !coreInfo.isFile()) {
-        qWarning() << "[ThroneEngine] Core binary not found for elevation:" << corePath;
-        if (ToastManager::instance()) {
-            ToastManager::instance()->showError(QStringLiteral("Core binary not found for elevation"));
-        }
-        return;
-    }
-
-    QString coreFileName = coreInfo.fileName();
-    if (coreFileName != QStringLiteral("beaxty-core") && coreFileName != QStringLiteral("beaxty-core.exe")) {
-        qWarning() << "[ThroneEngine] Untrusted core binary name for elevation:" << coreFileName;
-        return;
-    }
-
 #ifdef Q_OS_LINUX
-    // Ownership check: must be owned by root or current user
-    if (coreInfo.ownerId() != 0 && coreInfo.ownerId() != ::getuid()) {
-        qWarning() << "[ThroneEngine] Core binary is not owned by root or current user:" << canonicalCore;
+    if (m_cleanedUp || m_capabilitySetupInProgress) return;
+    if (m_state == Protected || m_state == Connecting) {
         if (ToastManager::instance()) {
-            ToastManager::instance()->showError(QStringLiteral("Небезопасный владелец файла ядра."));
+            ToastManager::instance()->showInfo(QStringLiteral("Сначала отключитесь, чтобы изменить права сетевого ядра."));
+        }
+        return;
+    }
+    if (hasVerifiedTunCore()) {
+        if (ToastManager::instance()) {
+            ToastManager::instance()->showInfo(QStringLiteral("Права TUN уже настроены для этого приложения."));
         }
         return;
     }
 
-    qDebug() << "[ThroneEngine] Elevating permissions for core daemon (SUID root):" << canonicalCore;
-    QString scriptPath;
-    QStringList candidateScripts = {
-        appDir + QStringLiteral("/scripts/setup-cap.sh"),
-        appDir + QStringLiteral("/../scripts/setup-cap.sh"),
-        QStringLiteral("/usr/share/beaxty-vpn/scripts/setup-cap.sh")
-    };
-    for (const auto &cand : candidateScripts) {
-        QFileInfo sInfo(cand);
-        if (sInfo.exists() && sInfo.isFile()) {
-            if (sInfo.ownerId() == 0 || sInfo.ownerId() == ::getuid()) {
-                scriptPath = sInfo.canonicalFilePath();
-                break;
-            }
+    QString sourcePath = m_bundledCoreBinaryPath;
+    if (sourcePath.isEmpty() || !QFileInfo::exists(sourcePath)) sourcePath = m_coreBinaryPath;
+    const QFileInfo sourceInfo(sourcePath);
+    const QString canonicalSource = sourceInfo.canonicalFilePath();
+    const QFile::Permissions writableByOthers = QFile::WriteGroup | QFile::WriteOther;
+    if (canonicalSource.isEmpty() || !sourceInfo.isFile() || !sourceInfo.isExecutable() ||
+        (sourceInfo.ownerId() != 0 && sourceInfo.ownerId() != ::getuid()) ||
+        (sourceInfo.permissions() & writableByOthers) || hasSetIdBits(canonicalSource) ||
+        hasFileCapabilities(canonicalSource)) {
+        qWarning() << "[ThroneEngine] Refusing capability setup for an unsafe core file.";
+        m_userWantsConnect = false;
+        if (ToastManager::instance()) {
+            ToastManager::instance()->showError(QStringLiteral("Не удалось проверить файл сетевого ядра."));
         }
+        return;
     }
 
+    const QByteArray digest = sha256File(canonicalSource);
+    if (digest.isEmpty()) {
+        m_userWantsConnect = false;
+        if (ToastManager::instance()) {
+            ToastManager::instance()->showError(QStringLiteral("Не удалось проверить файл сетевого ядра."));
+        }
+        return;
+    }
+
+    const QString coreRoot = beaxtySystemCoreDirectory(true);
+    if (coreRoot.isEmpty()) {
+        m_userWantsConnect = false;
+        if (ToastManager::instance()) {
+            ToastManager::instance()->showError(QStringLiteral("Системный каталог прав сетевого ядра небезопасен или недоступен."));
+        }
+        return;
+    }
+    const QString userDir = userCoreDirectoryPath(true);
+    if (userDir.isEmpty()) {
+        m_userWantsConnect = false;
+        if (ToastManager::instance()) {
+            ToastManager::instance()->showError(QStringLiteral("Каталог прав сетевого ядра имеет небезопасные права доступа."));
+        }
+        return;
+    }
+    const QString targetPath = QDir(userDir).filePath(
+        QStringLiteral("beaxty-vpn-core-%1").arg(QString::fromLatin1(digest)));
+    const QString pkexecPath = trustedSystemExecutable({QStringLiteral("/usr/bin/pkexec"),
+                                                         QStringLiteral("/bin/pkexec")});
+    const QString helperPath = QDir(QCoreApplication::applicationDirPath()).filePath(
+        QStringLiteral("beaxty-vpn-privileged-helper"));
+    const QFileInfo helperInfo(helperPath);
+    const QFile::Permissions helperWritableByOthers = QFile::WriteGroup | QFile::WriteOther;
+    if (pkexecPath.isEmpty() || !helperInfo.isFile() || !helperInfo.isExecutable() ||
+        helperInfo.canonicalFilePath() != helperPath ||
+        (helperInfo.ownerId() != 0 && helperInfo.ownerId() != ::getuid()) ||
+        (helperInfo.permissions() & helperWritableByOthers) || hasSetIdBits(helperPath) ||
+        hasFileCapabilities(helperPath)) {
+        m_userWantsConnect = false;
+        if (ToastManager::instance()) {
+            ToastManager::instance()->showError(
+                QStringLiteral("Не удалось проверить системный помощник для настройки TUN."));
+        }
+        return;
+    }
+
+    const QFileInfo coreRootInfo(coreRoot);
+    if ((coreRootInfo.exists() || coreRootInfo.isSymLink()) && beaxtySystemCoreDirectory().isEmpty()) {
+        m_userWantsConnect = false;
+        if (ToastManager::instance()) {
+            ToastManager::instance()->showError(QStringLiteral("Системный каталог прав сетевого ядра имеет небезопасные права доступа."));
+        }
+        return;
+    }
+    const QFileInfo userDirInfo(userDir);
+    const bool userDirExists = userDirInfo.exists() || userDirInfo.isSymLink();
+    if (userDirExists && userCoreDirectoryPath().isEmpty()) {
+        m_userWantsConnect = false;
+        if (ToastManager::instance()) {
+            ToastManager::instance()->showError(QStringLiteral("Каталог прав сетевого ядра имеет небезопасные права доступа."));
+        }
+        return;
+    }
+    const QFileInfo targetInfo(targetPath);
+    const bool targetExists = targetInfo.exists() || targetInfo.isSymLink();
+    if (targetExists && matchingInstalledCorePath(canonicalSource, digest) != targetPath) {
+        m_userWantsConnect = false;
+        if (ToastManager::instance()) {
+            ToastManager::instance()->showError(QStringLiteral("В системном каталоге уже есть непроверенная копия сетевого ядра."));
+        }
+        return;
+    }
+
+    auto completed = std::make_shared<bool>(false);
+    m_capabilitySetupInProgress = true;
     QProcess *proc = new QProcess(this);
-    connect(proc, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished), this,
-            [this, proc](int exitCode, QProcess::ExitStatus exitStatus) {
+    m_capabilitySetupProcess = proc;
+    auto fail = [this, proc, completed](const QString &message) {
+        if (*completed) return;
+        *completed = true;
+        m_capabilitySetupInProgress = false;
+        if (m_capabilitySetupProcess == proc) m_capabilitySetupProcess = nullptr;
         proc->deleteLater();
-        if (exitCode == 0 && exitStatus == QProcess::NormalExit) {
-            qDebug() << "[ThroneEngine] Elevation succeeded. Restarting core daemon...";
-            if (ToastManager::instance()) {
-                ToastManager::instance()->showSuccess(QStringLiteral("Права успешно повышены."));
+        m_userWantsConnect = false;
+        qWarning() << "[ThroneEngine] TUN capability setup failed.";
+        if (ToastManager::instance()) ToastManager::instance()->showError(message);
+    };
+
+    connect(proc, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished), this,
+            [this, proc, completed, fail, canonicalSource, targetPath, digest]
+            (int exitCode, QProcess::ExitStatus exitStatus) {
+        if (*completed) return;
+        if (m_cleanedUp) {
+            *completed = true;
+            m_capabilitySetupInProgress = false;
+            if (m_capabilitySetupProcess == proc) m_capabilitySetupProcess = nullptr;
+            proc->deleteLater();
+            return;
+        }
+        if (exitCode != 0 || exitStatus != QProcess::NormalExit) {
+            fail(QStringLiteral("Установка права CAP_NET_ADMIN отменена или завершилась ошибкой. SUID-root не применялся."));
+            return;
+        }
+        if (installedCorePath(canonicalSource, digest) != targetPath) {
+            fail(QStringLiteral("Не удалось проверить установленную копию сетевого ядра."));
+            return;
+        }
+
+        *completed = true;
+        m_capabilitySetupInProgress = false;
+        if (m_capabilitySetupProcess == proc) m_capabilitySetupProcess = nullptr;
+        proc->deleteLater();
+        AppPrefs::setString(QStringLiteral("linux_core_sha256"), QString::fromLatin1(digest));
+        m_coreBinaryPath = targetPath;
+        if (m_coreProcess) {
+            m_intentionalStop = true;
+            m_coreProcess->terminate();
+            if (!m_coreProcess->waitForFinished(1500)) {
+                m_coreProcess->kill();
+                m_coreProcess->waitForFinished(500);
             }
-            if (m_coreProcess) {
-                m_intentionalStop = true;
-                m_coreProcess->terminate();
-                if (!m_coreProcess->waitForFinished(1500)) {
-                    m_coreProcess->kill();
-                    m_coreProcess->waitForFinished(500);
-                }
-            }
-            spawnCoreDaemon();
-            if (m_userWantsConnect) {
-                QTimer::singleShot(600, this, [this]() {
-                    if (m_userWantsConnect && m_state == Disconnected && m_rpcSocket && m_rpcSocket->isOpen()) {
-                        qDebug() << "[ThroneEngine] Auto-resuming connection after capability elevation...";
-                        startConnection();
-                    }
-                });
-            }
-        } else {
-            qWarning() << "[ThroneEngine] Elevation failed or cancelled, exit code:" << exitCode;
+        }
+        if (!spawnCoreDaemon()) {
+            m_intentionalStop = false;
             m_userWantsConnect = false;
             if (ToastManager::instance()) {
-                ToastManager::instance()->showError(QStringLiteral("Повышение прав отменено или не удалось."));
+                ToastManager::instance()->showError(QStringLiteral("Право TUN установлено, но ядро не удалось перезапустить."));
             }
+            return;
+        }
+        m_intentionalStop = false;
+        if (ToastManager::instance()) {
+            ToastManager::instance()->showSuccess(QStringLiteral("Сетевое ядро установлено с правом CAP_NET_ADMIN без SUID-root."));
+        }
+    });
+    connect(proc, &QProcess::errorOccurred, this,
+            [fail](QProcess::ProcessError error) {
+        if (error == QProcess::FailedToStart) {
+            fail(QStringLiteral("Не удалось запустить системный помощник Polkit."));
         }
     });
 
-    QString pkexec = QStandardPaths::findExecutable(QStringLiteral("pkexec"));
-    if (!pkexec.isEmpty()) {
-        if (!scriptPath.isEmpty() && QFile::exists(scriptPath)) {
-            proc->start(pkexec, {QStringLiteral("/bin/bash"), scriptPath, canonicalCore});
-        } else {
-            QString cmd = QStringLiteral("chown root:root \"%1\" && chmod 4755 \"%1\"").arg(canonicalCore);
-            proc->start(pkexec, {QStringLiteral("sh"), QStringLiteral("-c"), cmd});
-        }
-    } else {
-        if (!scriptPath.isEmpty() && QFile::exists(scriptPath)) {
-            proc->start(QStringLiteral("/bin/bash"), {scriptPath, canonicalCore});
-        } else {
-            proc->start(QStringLiteral("sudo"), {QStringLiteral("sh"), QStringLiteral("-c"),
-                        QStringLiteral("chown root:root \"%1\" && chmod 4755 \"%1\"").arg(canonicalCore)});
-        }
-    }
-
     if (ToastManager::instance()) {
-        ToastManager::instance()->showInfo(QStringLiteral("Запрошено повышение прав TUN (Polkit)..."));
+        ToastManager::instance()->showInfo(
+            QStringLiteral("Будет установлена проверяемая копия ядра с CAP_NET_ADMIN, доступная только этому пользователю."));
     }
+    proc->start(pkexecPath, {helperPath, QStringLiteral("--install-core"), canonicalSource,
+                             QString::fromLatin1(digest)});
 #else
-    qDebug() << "[ThroneEngine] Elevated permissions handled natively on this platform.";
+    if (ToastManager::instance()) {
+        ToastManager::instance()->showInfo(QStringLiteral("Разрешения TUN на этой платформе обрабатываются системой."));
+    }
 #endif
 }
 
 void ThroneEngine::onCoreExited(int exitCode) {
     qWarning() << "[ThroneEngine] Core daemon exited with code:" << exitCode;
     bool wasProtected = (m_state == Protected);
+    const bool wasConnecting = (m_state == Connecting);
+    const bool connectionPending = m_userWantsConnect;
     if (m_state != Disconnected) {
         setState(Disconnected);
     }
@@ -1129,113 +1810,241 @@ void ThroneEngine::onCoreExited(int exitCode) {
 
     // An exit we did not ask for while the tunnel was up is exactly the drop the
     // failover / kill switch exists for.
-    if (wasProtected && !m_intentionalStop && !m_cleanedUp) {
-        if (m_failoverEnabled && triggerFailover()) {
-            return;
+    if (m_intentionalStop || m_cleanedUp) return;
+
+    if (wasConnecting && connectionPending && m_failoverInProgress) {
+        ++m_connectSeq;
+        m_intentionalStop = false;
+        setState(Disconnected);
+        tryNextFailoverCandidate();
+        return;
+    }
+
+    if (wasProtected) {
+        if (m_killSwitch) applyKillSwitch(true);
+        if (m_failoverEnabled && triggerFailover()) return;
+        m_userWantsConnect = false;
+        m_activeServerOverride = -1;
+        if (m_activeServerId >= 0) {
+            m_activeServerId = -1;
+            emit activeServerChanged(m_activeServerId);
         }
-        if (m_killSwitch) {
-            applyKillSwitch(true);
+        if (!m_killSwitch) {
+            const QString error = QStringLiteral("VPN core stopped unexpectedly. The system may now use its normal network connection.");
+            if (ToastManager::instance()) ToastManager::instance()->showError(error);
+            emit errorOccurred(error);
         }
+    } else if (wasConnecting && connectionPending) {
+        ++m_connectSeq;
+        m_userWantsConnect = false;
+        m_activeServerOverride = -1;
+        const QString error = QStringLiteral("VPN core stopped while connecting. Check TUN permissions and try again.");
+        if (ToastManager::instance()) ToastManager::instance()->showError(error);
+        emit errorOccurred(error);
     }
 }
 
 void ThroneEngine::onProfileStopped() {
     bool wasProtected = (m_state == Protected);
+    const bool wasConnecting = (m_state == Connecting);
     if (m_state != Disconnected) {
         setState(Disconnected);
     }
     stopTrafficLooper();
 
+    if (wasConnecting && m_failoverInProgress && !m_intentionalStop && !m_cleanedUp) {
+        ++m_connectSeq;
+        tryNextFailoverCandidate();
+        return;
+    }
+
     if (wasProtected && !m_intentionalStop && !m_cleanedUp) {
+        if (m_killSwitch) applyKillSwitch(true);
         if (m_failoverEnabled && triggerFailover()) {
             return;
         }
-        if (m_killSwitch) {
-            applyKillSwitch(true);
+        m_userWantsConnect = false;
+        m_activeServerOverride = -1;
+        if (m_activeServerId >= 0) {
+            m_activeServerId = -1;
+            emit activeServerChanged(m_activeServerId);
         }
     }
 }
 
 bool ThroneEngine::triggerFailover() {
-    if (!m_failoverEnabled) return false;
-    if (!ConfigAdapter::instance()) return false;
+    if (!m_failoverEnabled || m_failoverInProgress || !ConfigAdapter::instance()) return false;
 
-    auto servers = ConfigAdapter::instance()->servers();
-    if (servers.size() <= 1) {
-        qWarning() << "[ThroneEngine] Failover impossible: only" << servers.size() << "servers available";
-        m_failoverAttempts = 0;
-        m_failedServerIds.clear();
+    const int currentId = m_activeServerId >= 0
+                              ? m_activeServerId
+                              : ConfigAdapter::instance()->selectedServerId();
+    QSet<int> available;
+    QMap<int, int> latencies;
+    for (const auto &value : ConfigAdapter::instance()->servers()) {
+        const auto server = value.toMap();
+        const int id = server.value(QStringLiteral("id")).toInt();
+        if (id < 0) continue;
+        available.insert(id);
+        latencies.insert(id, server.value(QStringLiteral("ping")).toInt());
+    }
+
+    QSet<int> excluded;
+    if (currentId >= 0) excluded.insert(currentId);
+    const auto strategy = m_failoverStrategy == 1 ? FailoverPolicy::Strategy::ConfiguredOrder
+                                                   : FailoverPolicy::Strategy::LowestLatency;
+    m_failoverCandidateIds = FailoverPolicy::orderCandidates(
+        m_failoverServerIds, available, latencies, excluded, strategy);
+    if (m_failoverCandidateIds.isEmpty()) {
+        qWarning() << "[ThroneEngine] Failover has no eligible nodes in the selected pool";
         return false;
     }
 
-    int currentId = ConfigAdapter::instance()->selectedServerId();
-    m_failedServerIds.insert(currentId);
+    m_failedServerIds.clear();
+    if (currentId >= 0) m_failedServerIds.insert(currentId);
+    m_failoverCandidateIndex = 0;
+    m_failoverInProgress = true;
+    m_userWantsConnect = true;
+    m_routeFailureDetector.reset();
 
-    if (m_failoverAttempts >= servers.size()) {
-        qWarning() << "[ThroneEngine] Failover exhausted: tried" << m_failoverAttempts << "servers";
-        m_failoverAttempts = 0;
-        m_failedServerIds.clear();
-        QString err = QStringLiteral("Не удалось восстановить подключение (все серверы недоступны)");
-        if (ToastManager::instance()) ToastManager::instance()->showError(err);
-        return false;
+    const QString message = tr("Связь потеряна. Проверяем резервные серверы...");
+    qInfo() << "[ThroneEngine] Confirmed route failure; configured fallback candidates:"
+            << m_failoverCandidateIds;
+    if (ToastManager::instance()) ToastManager::instance()->showInfo(message);
+
+    if (m_state == Protected) beginFailoverRestart();
+    else tryNextFailoverCandidate();
+    return true;
+}
+
+void ThroneEngine::probeActiveRoute() {
+    if (m_state != Protected || !hasEligibleFallbackServers() || m_failoverInProgress) return;
+    if (m_routeProbeInFlight.exchange(true, std::memory_order_acq_rel)) return;
+
+    const uint64_t generation = m_connectSeq.load(std::memory_order_acquire);
+    m_workerPool.start([this, generation]() {
+        int latencyMs = 0;
+        const bool reachable = testCurrentCoreRouteBlocking(1200, &latencyMs);
+        QMetaObject::invokeMethod(this, [this, reachable, latencyMs, generation]() {
+            m_routeProbeInFlight.store(false, std::memory_order_release);
+            handleRouteProbeResult(reachable, latencyMs, generation);
+        });
+    });
+}
+
+void ThroneEngine::handleRouteProbeResult(bool reachable, int latencyMs, uint64_t generation) {
+    if (generation != m_connectSeq.load(std::memory_order_acquire) || m_state != Protected ||
+        !m_failoverEnabled || m_failoverInProgress) {
+        m_routeFailureDetector.reset();
+        m_routeConfirmTimer.stop();
+        return;
     }
 
-    int bestId = -1;
-    QString bestName;
-    int bestCategory = 999;
-    int bestPing = 999999;
+    if (reachable) {
+        m_routeFailureDetector.recordProbe(true);
+        m_routeConfirmTimer.stop();
+        if (m_activeServerId >= 0 && latencyMs > 0 && ConfigAdapter::instance()) {
+            ConfigAdapter::instance()->updateServerPing(m_activeServerId, latencyMs);
+        }
+        return;
+    }
 
-    for (const auto &val : servers) {
-        auto m = val.toMap();
-        int sId = m["id"].toInt();
-        if (m_failedServerIds.contains(sId)) {
+    qWarning() << "[ThroneEngine] Active route probe failed; consecutive failures:"
+               << (m_routeFailureDetector.consecutiveFailures() + 1);
+    if (!m_routeFailureDetector.recordProbe(false)) {
+        // Confirm quickly after the first miss, but require a second independent
+        // request before changing the user's route.
+        m_routeConfirmTimer.start(800);
+        return;
+    }
+
+    if (triggerFailover()) return;
+
+    m_routeFailureDetector.reset();
+    m_routeHealthTimer.stop();
+    if (ToastManager::instance()) {
+        ToastManager::instance()->showInfo(
+            tr("Текущий маршрут не отвечает. Добавьте резервные серверы в настройках, чтобы включить переключение."));
+    }
+    QTimer::singleShot(15000, this, [this]() { configureFailoverMonitoring(); });
+}
+
+void ThroneEngine::beginFailoverRestart() {
+    if (!m_failoverInProgress || m_state != Protected) return;
+
+    ++m_connectSeq;
+    const uint64_t generation = m_connectSeq.load(std::memory_order_acquire);
+    m_intentionalStop = true;
+    m_userWantsConnect = true;
+    stopTrafficLooper();
+    setState(Connecting);
+    m_statusMessage = tr("Переключение на резервный сервер...");
+    emit statusMessageChanged(m_statusMessage);
+
+    m_workerPool.start([this, generation]() {
+        bool stopped = false;
+        if (API::defaultClient && m_rpcConnected.load(std::memory_order_acquire)) {
+            API::defaultClient->Stop(&stopped);
+        }
+        QThread::msleep(150);
+        QMetaObject::invokeMethod(this, [this, generation]() {
+            if (generation != m_connectSeq.load(std::memory_order_acquire) || !m_failoverInProgress ||
+                m_cleanedUp) {
+                return;
+            }
+            m_intentionalStop = false;
+            setState(Disconnected);
+            tryNextFailoverCandidate();
+        });
+    });
+}
+
+void ThroneEngine::tryNextFailoverCandidate() {
+    if (!m_failoverInProgress || m_cleanedUp) return;
+    while (m_failoverCandidateIndex < m_failoverCandidateIds.size()) {
+        const int candidateId = m_failoverCandidateIds.at(m_failoverCandidateIndex++);
+        if (m_failedServerIds.contains(candidateId) || !Configs::dataManager ||
+            !Configs::dataManager->profilesRepo || !Configs::dataManager->profilesRepo->GetProfile(candidateId)) {
             continue;
         }
 
-        int sPing = m["ping"].toInt();
-        int category = (sPing > 0) ? 1 : (sPing == 0 ? 2 : 3);
-
-        if (category < bestCategory) {
-            bestCategory = category;
-            bestPing = sPing;
-            bestId = sId;
-            bestName = m["name"].toString();
-        } else if (category == bestCategory) {
-            if (category == 1 && sPing < bestPing) {
-                bestPing = sPing;
-                bestId = sId;
-                bestName = m["name"].toString();
-            } else if (bestId == -1) {
-                bestId = sId;
-                bestName = m["name"].toString();
-            }
-        }
-    }
-
-    if (bestId < 0) {
-        qWarning() << "[ThroneEngine] Failover: no untried servers remaining";
-        m_failoverAttempts = 0;
-        m_failedServerIds.clear();
-        QString err = QStringLiteral("Не удалось восстановить подключение (все серверы недоступны)");
-        if (ToastManager::instance()) ToastManager::instance()->showError(err);
-        return false;
-    }
-
-    m_failoverAttempts++;
-    m_failedServerIds.insert(bestId);
-
-    QString nodeName = bestName.isEmpty() ? QStringLiteral("Server #%1").arg(bestId) : bestName;
-    QString msg = QStringLiteral("Связь потеряна. Переключение на «%1»...").arg(nodeName);
-    qInfo() << "[ThroneEngine] Failover attempt" << m_failoverAttempts << "switching to" << bestId << nodeName;
-    if (ToastManager::instance()) {
-        ToastManager::instance()->showInfo(msg);
-    }
-
-    ConfigAdapter::instance()->selectServer(bestId);
-    QTimer::singleShot(250, this, [this]() {
+        m_failedServerIds.insert(candidateId);
+        m_activeServerOverride = candidateId;
+        m_userWantsConnect = true;
+        m_intentionalStop = false;
+        qInfo() << "[ThroneEngine] Trying fallback profile" << candidateId;
         startConnection();
-    });
-    return true;
+        return;
+    }
+
+    finishFailoverFailure(tr("Не удалось подключиться ни к одному серверу из резервного пула."));
+}
+
+void ThroneEngine::finishFailoverFailure(const QString &error) {
+    qWarning() << "[ThroneEngine]" << error;
+    m_failoverInProgress = false;
+    m_failoverCandidateIds.clear();
+    m_failoverCandidateIndex = 0;
+    m_failedServerIds.clear();
+    m_activeServerOverride = -1;
+    m_userWantsConnect = false;
+    m_intentionalStop = false;
+    if (m_activeServerId >= 0) {
+        m_activeServerId = -1;
+        emit activeServerChanged(m_activeServerId);
+    }
+    setState(Disconnected);
+    const int retryDelaySeconds = hasEligibleFallbackServers()
+                                      ? m_failoverRetryDelayMs / 1000
+                                      : 0;
+    const QString userMessage = retryDelaySeconds > 0
+                                    ? tr("%1 Повторная попытка через %2 сек.").arg(error).arg(retryDelaySeconds)
+                                    : error;
+    if (ToastManager::instance()) ToastManager::instance()->showError(userMessage);
+    emit errorOccurred(userMessage);
+    if (retryDelaySeconds > 0) {
+        m_failoverRetryDelayMs = qMin(m_failoverRetryDelayMs * 2, 300000);
+        m_failoverRetryTimer.start(retryDelaySeconds * 1000);
+    }
 }
 
 void ThroneEngine::cleanup() {
@@ -1253,7 +2062,34 @@ void ThroneEngine::cleanup() {
     }
 
     m_intentionalStop = true;
+    m_userWantsConnect = false;
+    ++m_connectSeq;
+    m_routeHealthTimer.stop();
+    m_routeConfirmTimer.stop();
+    m_failoverRetryTimer.stop();
+    m_workerPool.clear();
+
+    // Do not let a pending Polkit authorization continue changing system
+    // privileges after the application is shutting down.
+    if (m_capabilitySetupProcess) {
+        QProcess *proc = m_capabilitySetupProcess;
+        disconnect(proc, nullptr, this, nullptr);
+        if (proc->state() != QProcess::NotRunning) {
+            proc->terminate();
+            if (!proc->waitForFinished(1000)) {
+                proc->kill();
+                proc->waitForFinished(500);
+            }
+        }
+        m_capabilitySetupProcess = nullptr;
+        m_capabilitySetupInProgress = false;
+        delete proc;
+    }
+
     stopConnection();
+    // Workers use this object and shared Throne repositories. Join them before
+    // the engine or its database dependencies can be destroyed.
+    m_workerPool.waitForDone();
     stopTrafficLooper();
 
     if (m_coreProcess) {
@@ -1266,7 +2102,8 @@ void ThroneEngine::cleanup() {
         m_coreProcess = nullptr;
     }
 
-    m_rpcSocket = nullptr;
+    ++m_rpcGeneration;
+    m_rpcConnected.store(false, std::memory_order_release);
 
     if (m_localServer) {
         m_localServer->close();

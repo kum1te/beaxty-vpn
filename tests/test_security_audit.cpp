@@ -66,6 +66,8 @@ int main(int argc, char *argv[]) {
                 "SSRF: IPv6 ULA address was NOT blocked");
         require(!NetworkRequestHelper::IsSafePublicUrl(QUrl("http://localhost./")),
                 "SSRF: dotted localhost hostname was NOT blocked");
+        require(!NetworkRequestHelper::IsSafePublicUrl(QUrl("https://user:password@example.invalid/sub")),
+                "URL credentials in authority were not rejected");
 
         // Non-http schemes MUST be blocked
         require(!NetworkRequestHelper::IsSafePublicUrl(QUrl("file:///etc/passwd")),

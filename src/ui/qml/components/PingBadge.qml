@@ -87,7 +87,8 @@ Rectangle {
             color: root.isTesting ? Theme.textPrimary : root.valueColor
             opacity: root.isTesting ? (0.55 + 0.45 * Math.sin(root.wavePhase)) : 1.0
             font.pixelSize: 11
-            font.family: Theme.fontMono
+            font.family: Theme.fontSans
+            font.letterSpacing: 0
             font.bold: true
             Behavior on color { ColorAnimation { duration: Theme.durationNormal } }
         }

@@ -139,11 +139,14 @@ QColor Theme::textPrimary() const {
 }
 
 QColor Theme::textSecondary() const {
-    return isDark() ? QColor(0x7E, 0x7E, 0x87) : QColor(0x6B, 0x72, 0x80);
+    // Keep supporting text legible on cards and page surfaces in both themes.
+    return isDark() ? QColor(0xA1, 0xA1, 0xAA) : QColor(0x52, 0x52, 0x5B);
 }
 
 QColor Theme::textMuted() const {
-    return isDark() ? QColor(0x48, 0x48, 0x4E) : QColor(0x9C, 0xA3, 0xAF);
+    // Tertiary labels still need enough contrast to be read; this pair reaches
+    // at least 4.5:1 over the card, hover, and page surfaces.
+    return isDark() ? QColor(0x8A, 0x8A, 0x92) : QColor(0x62, 0x6B, 0x7A);
 }
 
 QColor Theme::textInverted() const {
@@ -163,7 +166,7 @@ QColor Theme::statusStrong() const {
 }
 
 QColor Theme::statusMedium() const {
-    return isDark() ? QColor(0x9A, 0x9A, 0xA3) : QColor(0x6B, 0x72, 0x80);
+    return isDark() ? QColor(0xA1, 0xA1, 0xAA) : QColor(0x52, 0x52, 0x5B);
 }
 
 QColor Theme::statusWeak() const {

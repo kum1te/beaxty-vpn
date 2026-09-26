@@ -48,7 +48,11 @@ Rectangle {
 
         Image {
             id: navIcon
-            x: 14 + ((parent.width - width) / 2 - 14) * root.collapseProgress
+            objectName: "sidebarNavIcon"
+            // Keep the icon anchored to the sidebar's centerline. Computing this
+            // from the shrinking row width made it drift right midway, then snap
+            // back as the animation completed.
+            x: 14 + 3 * root.collapseProgress
             anchors.verticalCenter: parent.verticalCenter
             width: 18
             height: 18
@@ -119,7 +123,7 @@ Rectangle {
         radius: parent.radius
         color: "transparent"
         border.color: Theme.textSecondary
-        border.width: 1
+        border.width: 2
         visible: root.activeFocus
     }
 }

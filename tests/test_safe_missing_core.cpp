@@ -2,18 +2,18 @@
 // Copyright (C) 2026 BeaxtyVPN Authors
 
 #include <QApplication>
+#include <QElapsedTimer>
 #include <QTemporaryDir>
 #include <iostream>
 
 #include "src/core/ThroneEngine.hpp"
 #include "3rdparty/throne/include/api/RPC.h"
-#include "3rdparty/throne/include/stats/traffic/TrafficLooper.hpp"
 
 int main(int argc, char *argv[]) {
     qputenv("QT_QPA_PLATFORM", "offscreen");
     QApplication app(argc, argv);
 
-    QTemporaryDir tempDir(QStringLiteral("beaxty-traffic-loop-XXXXXX"));
+    QTemporaryDir tempDir(QStringLiteral("beaxty-missing-core-XXXXXX"));
     if (!tempDir.isValid()) {
         std::cerr << "Could not create isolated test directory\n";
         return 1;
@@ -26,29 +26,27 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
-    auto *looper = Stats::trafficLooper;
-    if (!looper || !looper->proxy || !looper->direct) {
-        std::cerr << "Traffic looper defaults were not initialized\n";
-        return 1;
-    }
+    bool errorReported = false;
+    QObject::connect(&engine, &ThroneEngine::errorOccurred, &app,
+                     [&errorReported](const QString &) { errorReported = true; });
 
-    looper->stop_requested.store(false, std::memory_order_release);
-    looper->loop_enabled.store(true, std::memory_order_release);
-    engine.setStateForTesting(ThroneEngine::Connecting);
-    engine.stopConnection();
+    QElapsedTimer timer;
+    timer.start();
+    engine.startConnection();
+    const qint64 elapsedMs = timer.elapsed();
 
     const bool passed = engine.state() == ThroneEngine::Disconnected &&
-                        !looper->loop_enabled.load(std::memory_order_acquire) &&
-                        looper->stop_requested.load(std::memory_order_acquire);
+                        errorReported && elapsedMs < 1000;
     engine.cleanup();
     delete API::defaultClient;
     API::defaultClient = nullptr;
 
     if (!passed) {
-        std::cerr << "Disconnect did not publish safe traffic-looper stop flags\n";
+        std::cerr << "Missing-core failure was not reported promptly (" << elapsedMs << " ms)\n";
         return 1;
     }
 
-    std::cout << "Traffic-looper lifecycle test passed without a core or tunnel.\n";
+    std::cout << "Safe missing-core test passed in " << elapsedMs
+              << " ms; no daemon or tunnel was available to start.\n";
     return 0;
 }

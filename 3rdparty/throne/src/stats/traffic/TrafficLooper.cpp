@@ -87,15 +87,15 @@ namespace Stats {
     void TrafficLooper::Loop() {
         elapsedTimer.start();
         int secs_since_save = 0;
-        while (!stop_requested) {
+        while (!stop_requested.load(std::memory_order_acquire)) {
             QThread::msleep(1000);
-            if (stop_requested) break;
+            if (stop_requested.load(std::memory_order_acquire)) break;
 
             if (Configs::dataManager->settingsRepo->disable_traffic_stats) {
                 continue;
             }
 
-            if (!loop_enabled) {
+            if (!loop_enabled.load(std::memory_order_acquire)) {
                 if (looping) {
                     looping = false;
                     runOnUiThread([=] {

@@ -6,6 +6,7 @@
 #include <QApplication>
 #include <QFile>
 #include <QDir>
+#include <QTemporaryDir>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonArray>
@@ -35,8 +36,9 @@ int main(int argc, char *argv[]) {
     MW_show_log = [](const QString &msg) { /* silence or std::cout << msg.toStdString() << std::endl; */ };
     MW_dialog_message = [](MwMessage, QStringList) {};
 
-    QString testDb = QStringLiteral("/tmp/test_per_app_routing.db");
-    if (QFile::exists(testDb)) QFile::remove(testDb);
+    QTemporaryDir tempDir(QStringLiteral("beaxty-per-app-routing-XXXXXX"));
+    if (!tempDir.isValid()) return 1;
+    const QString testDb = tempDir.filePath(QStringLiteral("throne.db"));
 
     Configs::initDB(testDb.toStdString());
 

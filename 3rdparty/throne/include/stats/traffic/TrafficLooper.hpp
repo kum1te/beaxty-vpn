@@ -4,6 +4,7 @@
 #include <QList>
 #include <QMutex>
 
+#include <atomic>
 #include <string>
 
 #include "include/database/entities/Profile.h"
@@ -35,8 +36,8 @@ namespace Stats {
     class TrafficLooper {
     public:
         TrafficLooper();
-        bool loop_enabled = false;
-        bool stop_requested = false;
+        std::atomic_bool loop_enabled{false};
+        std::atomic_bool stop_requested{false};
         bool looping = false;
         QMutex loop_mutex;
 

@@ -9,9 +9,6 @@
 #include "3rdparty/throne/include/global/Utils.hpp"
 
 #include <QDebug>
-#ifdef Q_OS_LINUX
-#include <include/sys/linux/LinuxCap.h>
-#endif
 
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
@@ -128,35 +125,14 @@ bool MainWindow::get_elevated_permissions(ExitReason reason) {
     }
     if (Configs::IsAdmin()) return true;
 
-    QString corePath = Configs::FindCoreRealPath();
-    if (Configs::isSetuidSet(corePath.toStdString())) {
-        return true;
-    }
-
 #ifdef Q_OS_LINUX
-    if (!Linux_HavePkexec()) {
-        qWarning() << "[MainWindowBridge] pkexec is not available on this system.";
-        if (BridgeCallbacks::onShowToast) {
-            BridgeCallbacks::onShowToast(QStringLiteral("Permission Error"),
-                                         QStringLiteral("Please install 'pkexec' to elevate TUN permissions"),
-                                         true);
-        }
-        return false;
+    qWarning() << "[MainWindowBridge] Legacy privilege escalation is disabled; refusing SUID-root setup.";
+    if (BridgeCallbacks::onShowToast) {
+        BridgeCallbacks::onShowToast(QStringLiteral("TUN permission required"),
+                                     QStringLiteral("Use the BeaxtyVPN settings to install CAP_NET_ADMIN for the network core."),
+                                     true);
     }
-
-    auto ret = Linux_Run_Command(QStringLiteral("chown"), {QStringLiteral("root:root"), corePath});
-    if (ret != 0) {
-        qWarning() << "[MainWindowBridge] Failed to run pkexec chown:" << ret;
-        return false;
-    }
-    ret = Linux_Run_Command(QStringLiteral("chmod"), {QStringLiteral("4755"), corePath});
-    if (ret != 0) {
-        qWarning() << "[MainWindowBridge] Failed to run pkexec chmod:" << ret;
-        return false;
-    }
-    qDebug() << "[MainWindowBridge] Successfully elevated core permissions (SUID root):" << corePath;
-    StopVPNProcess();
-    return true;
+    return false;
 #else
     return true;
 #endif

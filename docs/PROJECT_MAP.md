@@ -19,8 +19,8 @@
 | :--- | :--- | :--- |
 | **GUI / Frontend** | **C++20, Qt 6.8+ (QML, QtQuick, QtQuick Controls 2)** | Декларативный UI с поддержкой аппаратного ускорения RHI, кастомных шейдеров и динамических тем. |
 | **Web-интеграция** | **QtWebEngine / QtWebChannel / SVG** | Встроенный личный кабинет пользователя (`CabinetView.qml`), открывающийся как внутри окна, так и через системный браузер. |
-| **Core Daemon** | **Go 1.22+ (stable), sing-box, Xray-core** | Бинарник `beaxty-core`, управляющий сетевыми туннелями, криптографией, DNS и правилами маршрутизации. |
-| **Межпроцессная связь (IPC)** | **gRPC, Protobuf (Throne simple-protobuf)** | Обмен сообщениями между GUI и Core Daemon через UNIX Domain Socket (`/tmp/beaxtyIPC-...`) на Linux/macOS и Local Named Pipes / TCP на Windows. |
+| **Core Daemon** | **Go 1.26, sing-box, Xray-core** | Бинарник `beaxty-core`, управляющий сетевыми туннелями, криптографией, DNS и правилами маршрутизации. Минимальная версия Go задаётся `go` директивой в `3rdparty/throne/core/server/go.mod`. |
+| **Межпроцессная связь (IPC)** | **Framed Protobuf (Throne simple-protobuf) через Qt Local Sockets** | GUI/Core обмениваются ограниченными по размеру кадрами через локальный сокет: Unix Domain Socket на Linux/macOS и named pipe на Windows. Это не gRPC. |
 | **Сетевые драйверы TUN** | **Wintun (Windows), Linux TUN/TAP (`cap_net_admin`), macOS `utun`** | Создание виртуального сетевого интерфейса для прозрачного перехвата и маршрутизации всего системного трафика. |
 | **Локальное хранилище** | **SQLite 3 (`throne.db`)** | Локальная база данных подписок, серверов, настроек, пресетов маршрутизации и статистики трафика. |
 | **Система сборки** | **CMake 3.20+, Ninja, GCC / Clang / MSVC 2022** | Мультиплатформенная сборка C++ бинарника и тестов. |
@@ -53,7 +53,6 @@ beaxtyvpnapp/
 ├── scripts/                     # Скрипты сборки и упаковки
 │   ├── build_core.sh            # Сборка Go-демона beaxty-core с нужными тегами
 │   ├── package_linux.sh         # Сборка автономного Linux AppImage и tar.gz
-│   └── setup-cap.sh             # Настройка прав setcap cap_net_admin на Linux
 ├── src/                         # Основной исходный код приложения (C++ / QML)
 │   ├── main.cpp                 # Точка входа в приложение, CLI-парсер, Single-Instance Lock
 │   ├── bridge/                  # Связующий слой между C++ и QML
@@ -65,6 +64,7 @@ beaxtyvpnapp/
 │   │   ├── ConfigAdapter.cpp / .hpp     # Управление базой SQLite, парсер подписок
 │   │   ├── DeepLinkManager.cpp / .hpp   # Обработка deep links beaxty://
 │   │   ├── DeviceIdentity.cpp / .hpp    # Генерация стабильного аппаратного HWID
+│   │   ├── LocalPeerCredentials.hpp     # Linux-проверка PID/UID peer перед IPC с core
 │   │   ├── LocalizationManager.cpp/.hpp # Мультиязычность (RU, EN и др.)
 │   │   ├── RoutingManager.cpp / .hpp    # Логика профилей маршрутизации
 │   │   ├── ThroneEngine.cpp / .hpp      # Управление процессами демона, IPC, статус
@@ -97,9 +97,12 @@ beaxtyvpnapp/
 │   ├── test_hwid.cpp                    # Тест генератора HWID
 │   ├── test_per_app_routing.cpp         # Тест выборочной маршрутизации приложений
 │   ├── test_routing_presets.cpp         # Тест пресетов маршрутизации
-│   ├── test_security_audit.cpp          # Тест безопасности (SSRF, LPE, Kill Switch)
+│   ├── test_safe_missing_core.cpp       # Проверка ранней ошибки без запуска демона
+│   ├── test_security_audit.cpp          # Проверки security-инвариантов
 │   ├── test_subscription_import.cpp     # Тест импорта ссылок подписок
-│   └── test_subscription_safety.cpp     # Тест защиты от вредоносных подписок
+│   ├── test_subscription_safety.cpp     # Тест защиты от вредоносных подписок
+│   ├── test_traffic_looper_lifecycle.cpp # Проверка stop-флагов без core и туннеля
+│   └── test_capture_ui.cpp               # Офлайн UI screenshot harness
 └── CMakeLists.txt               # Главный файл конфигурации сборки проекта
 ```
 
@@ -140,7 +143,7 @@ flowchart TD
 1. **Старт приложения**: `src/main.cpp` инициализирует `QLockFile` (защита от повторного запуска). Если экземпляр уже есть, он передает аргументы по локальному сокету и завершается.
 2. **Инициализация БД**: `ConfigAdapter` открывает SQLite базу данных, читает сохраненные подписки, серверы и настройки.
 3. **Запуск демона**: `ThroneEngine` запускает дочерний процесс `beaxty-core` с уникальным сокетом `/tmp/beaxtyIPC-<UUID>`.
-4. **Подключение**: `ThroneEngine` подключается к сокету и передает сформированный JSON/Protobuf конфиг в sing-box.
+4. **Подключение**: На Linux `ThroneEngine` сверяет kernel peer credentials принятого сокета с PID дочернего `beaxty-core` и UID текущего пользователя, затем передаёт локальный сокет RPC-клиенту Throne; тот владеет сокетом и переносит его в отдельный I/O-поток. Engine отслеживает только атомарный статус и поколение подключения; команды Start/Stop сериализуются отдельной очередью, а завершение ждёт текущих RPC-задач. Конфиг формируется по профилю и передаётся в sing-box как JSON/Protobuf.
 5. **Мониторинг**: Демон шлет периодическую телеметрию (скорость, байты, состояние подключения) обратно в `TrafficMonitor`.
 
 ### 4.2. Маршрутизация (Routing)
@@ -169,7 +172,9 @@ flowchart TD
   * Принудительно копирует **все companion-библиотеки Qt6** из `${QT_INSTALL_LIBS}` в `usr/lib` (`libQt6QuickLayouts.so.6`, `libQt6QuickTemplates2.so.6`, `libQt6QuickControls2.so.6`, `libQt6WaylandClient.so.6` и т.д.).
   * Запускает `linuxdeploy --deploy-deps-only` рекурсивно по `usr/plugins`, `usr/qml` и `usr/lib`.
   * **Автоматический валидатор `ldd`**: Перед упаковкой скрипт прогоняет `ldd` по каждому ELF-бинарнику. Если есть отсутствующие библиотеки или утечка на системный Qt (`/usr/lib/libQt6`), сборка прерывается.
-  * **Запуск без root**: Бинарнику `beaxty-core` выставляются capability: `setcap cap_net_admin,cap_net_bind_service=ep`.
+  * **Права TUN**: при первом нажатии «Подключиться» приложение объясняет запрос и ждёт явного согласия. Один Polkit-вызов запускает узкий `beaxty-vpn-privileged-helper`. Он проверяет SHA-256 и расположение встроенного ядра, создаёт root-owned копию в `/usr/lib/beaxty-vpn/<UID>`, ограничивает проход ACL только текущим UID и назначает только `cap_net_admin=ep`; SUID-root не применяется. Дальше подключение переиспользует проверенную копию.
+  * **Эмодзи в Linux**: в приложение встроен Noto Color Emoji с лицензией OFL 1.1. Для Unicode common script обычный системный UI-шрифт идёт раньше emoji fallback, чтобы цифры не отрисовывались цветным emoji-шрифтом.
+  * **Важно**: Kill Switch не гарантирует блокировку системного трафика после падения ядра; приложение сообщает об этом явно.
 
 ### 5.2. Windows (Portable ZIP)
 * **Компилятор**: MSVC 2022 64-bit, Ninja.
@@ -178,11 +183,11 @@ flowchart TD
 * **TUN драйвер**: Скачивается официальный `wintun.dll` (v0.14.1) и помещается рядом с `beaxty-vpn.exe`.
 * **Go build**: `CGO_ENABLED=0 go build -tags "with_clash_api,with_gvisor,with_quic,with_wireguard,with_utls,with_dhcp,with_tailscale" -ldflags "-checklinkname=0"`.
 
-### 5.3. macOS (DMG Universal)
+### 5.3. macOS (DMG, одна архитектура)
 * **Компилятор**: Apple Clang, Ninja, macOS 14 runner.
 * **Развертывание**: `macdeployqt BeaxtyVPN.app -qmldir=src/ui`.
 * **Подпись**: Ad-hoc code signing (`codesign --force --deep --sign -`).
-* **Образ**: Упаковка в DMG через `hdiutil`.
+* **Образ**: Упаковка в DMG через `hdiutil`; текущий workflow строит одну архитектуру runner'а и не выполняет universal/lipo-слияние.
 
 ---
 

@@ -28,6 +28,7 @@ func BatchURLTest(ctx context.Context, i *boxbox.Box, outboundTags []string, url
 	results := runBatch(ctx, i, outboundTags, maxConcurrency, batchProbe[URLTestResult]{
 		run: func(ctx context.Context, tag string, outbound adapter.Outbound) *URLTestResult {
 			client := outboundHTTPClient(ctx, outbound, timeout)
+			defer client.CloseIdleConnections()
 			duration, err := urlTest(ctx, client, url)
 			if err == nil && twice {
 				duration, err = urlTest(ctx, client, url)

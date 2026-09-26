@@ -108,6 +108,9 @@ namespace Configs_network {
         if (!url.isValid()) return false;
         QString scheme = url.scheme().toLower();
         if (scheme != QStringLiteral("http") && scheme != QStringLiteral("https")) return false;
+        // Do not let an imported URL quietly turn into an HTTP Basic-auth
+        // credential source through authority user-info (user:pass@host).
+        if (!url.userInfo().isEmpty()) return false;
 
         QString host = url.host().trimmed().toLower();
         if (host.isEmpty()) return false;
@@ -172,14 +175,19 @@ namespace Configs_network {
             }
             accessManager->setProxy(p);
         }
-        request.setAttribute(QNetworkRequest::RedirectPolicyAttribute, QNetworkRequest::NoLessSafeRedirectPolicy);
+        const bool sendDeviceInfo = sendHwid &&
+            parsedUrl.scheme().compare(QStringLiteral("https"), Qt::CaseInsensitive) == 0 &&
+            !Configs::dataManager->settingsRepo->net_insecure;
+        request.setAttribute(QNetworkRequest::RedirectPolicyAttribute,
+                             sendDeviceInfo ? QNetworkRequest::SameOriginRedirectPolicy
+                                            : QNetworkRequest::NoLessSafeRedirectPolicy);
         request.setHeader(QNetworkRequest::KnownHeaders::UserAgentHeader, Configs::dataManager->settingsRepo->GetUserAgent());
         if (Configs::dataManager->settingsRepo->net_insecure) {
             QSslConfiguration c;
             c.setPeerVerifyMode(QSslSocket::PeerVerifyMode::VerifyNone);
             request.setSslConfiguration(c);
         }
-        if (sendHwid) {
+        if (sendDeviceInfo) {
             auto details = GetDeviceDetails();
 
             QMap<QString, QString> customParams;

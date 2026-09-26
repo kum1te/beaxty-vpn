@@ -41,6 +41,24 @@ DeepLinkManager *DeepLinkManager::instance() {
 }
 
 namespace {
+bool parseStrictAbsoluteUrl(const QString &rawUrl, QUrl &url) {
+    // Do not trim or repair browser-provided URLs. A URL with whitespace or
+    // malformed escaping must fail closed instead of changing its meaning.
+    if (rawUrl.isEmpty() || rawUrl.size() > 8192 || rawUrl != rawUrl.trimmed()) {
+        return false;
+    }
+
+    url = QUrl(rawUrl, QUrl::StrictMode);
+    return url.isValid() && !url.isRelative() && !url.scheme().isEmpty();
+}
+
+bool hasUserInfo(const QUrl &url) {
+    // QUrl in the project's minimum Qt release has no hasUserInfo() accessor.
+    // In a fully encoded authority, a literal '@' is the user-info separator;
+    // an encoded %40 inside a username remains encoded and is not confused.
+    return url.authority(QUrl::FullyEncoded).contains(QLatin1Char('@'));
+}
+
 QString safeUrlForLog(const QString &rawUrl) {
     const QUrl parsed(rawUrl);
     if (!parsed.isValid() || parsed.scheme().isEmpty() || parsed.host().isEmpty()) {
@@ -55,17 +73,71 @@ QString safeUrlForLog(const QString &rawUrl) {
 }
 }
 
+bool DeepLinkManager::isBeaxtyUrl(const QString &rawUrl) const {
+    QUrl url;
+    return parseStrictAbsoluteUrl(rawUrl, url) &&
+           url.scheme().compare(QStringLiteral("beaxty"), Qt::CaseInsensitive) == 0;
+}
+
+bool DeepLinkManager::isTrustedCabinetUrl(const QString &rawUrl) const {
+    QUrl url;
+    if (!parseStrictAbsoluteUrl(rawUrl, url) ||
+        url.scheme().compare(QStringLiteral("https"), Qt::CaseInsensitive) != 0 ||
+        hasUserInfo(url)) {
+        return false;
+    }
+
+    // Keep the embedded account origin narrow. Other beaxty subdomains can
+    // contain unrelated or user-controlled content and belong in a browser.
+    if (url.host(QUrl::EncodeUnicode).compare(QStringLiteral("cabinet.beaxty.com"), Qt::CaseInsensitive) != 0) {
+        return false;
+    }
+
+    const int port = url.port(-1);
+    return port == -1 || port == 443;
+}
+
+bool DeepLinkManager::isAllowedExternalUrl(const QString &rawUrl) const {
+    QUrl url;
+    if (!parseStrictAbsoluteUrl(rawUrl, url) ||
+        url.scheme().compare(QStringLiteral("https"), Qt::CaseInsensitive) != 0 ||
+        url.host().isEmpty() || hasUserInfo(url)) {
+        return false;
+    }
+
+    // Reject known local hostnames and address literals. DNS resolution is
+    // deliberately avoided here: this method runs in the UI thread and a
+    // user-clicked link is opened by the user's system browser.
+    const QString host = url.host(QUrl::EncodeUnicode).toLower();
+    if (host == QStringLiteral("localhost") || host.endsWith(QStringLiteral(".localhost")) ||
+        host.endsWith(QStringLiteral(".local")) || host == QStringLiteral("metadata.google.internal")) {
+        return false;
+    }
+    const QHostAddress address(host);
+    // Reject IP literals altogether. This covers private, loopback, link-local,
+    // mapped IPv4 and less common special ranges without duplicating a CIDR list.
+    if (!address.isNull()) {
+        return false;
+    }
+
+    const int port = url.port(-1);
+    return port == -1 || (port > 0 && port <= 65535);
+}
+
 bool DeepLinkManager::parseDeepLink(const QString &rawUrl, QString &targetUrl, QString &groupName, QString *outError) {
     targetUrl.clear();
     groupName.clear();
 
-    QString trimmed = rawUrl.trimmed();
-    if (trimmed.isEmpty()) {
+    if (rawUrl.isEmpty()) {
         if (outError) *outError = QStringLiteral("Пустая ссылка");
         return false;
     }
+    if (rawUrl.toUtf8().size() > 8192 || rawUrl != rawUrl.trimmed()) {
+        if (outError) *outError = QStringLiteral("Некорректная длина ссылки или пробелы по краям");
+        return false;
+    }
 
-    QUrl url(trimmed);
+    QUrl url(rawUrl, QUrl::StrictMode);
     if (!url.isValid() || url.scheme().compare(QStringLiteral("beaxty"), Qt::CaseInsensitive) != 0) {
         if (outError) *outError = QStringLiteral("Некорректная схема протокола (ожидается beaxty://)");
         return false;
@@ -112,8 +184,8 @@ bool DeepLinkManager::parseDeepLink(const QString &rawUrl, QString &targetUrl, Q
     }
 
     // Strict validation of the target subscription URL
-    QUrl targetParsed(paramUrl);
-    if (!targetParsed.isValid()) {
+    QUrl targetParsed(paramUrl, QUrl::StrictMode);
+    if (!targetParsed.isValid() || targetParsed.isRelative()) {
         if (outError) *outError = QStringLiteral("Некорректный URL подписки");
         return false;
     }
@@ -121,6 +193,10 @@ bool DeepLinkManager::parseDeepLink(const QString &rawUrl, QString &targetUrl, Q
     QString scheme = targetParsed.scheme().toLower();
     if (scheme != QStringLiteral("http") && scheme != QStringLiteral("https")) {
         if (outError) *outError = QStringLiteral("Недопустимый протокол целевого URL: ") + scheme;
+        return false;
+    }
+    if (targetParsed.host().isEmpty()) {
+        if (outError) *outError = QStringLiteral("Некорректный URL подписки");
         return false;
     }
 

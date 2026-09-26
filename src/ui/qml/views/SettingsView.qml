@@ -12,9 +12,86 @@ Item {
     objectName: "settingsView"
 
     readonly property bool hasEngine: typeof throneEngine !== "undefined"
+    readonly property bool hasConfigAdapter: typeof configAdapter !== "undefined"
     readonly property bool hasIdentity: typeof deviceIdentity !== "undefined"
     readonly property bool hasLoc: typeof locManager !== "undefined"
     readonly property bool hasWebEngineSupport: (typeof hasWebEngine !== "undefined") ? Boolean(hasWebEngine) : false
+    property bool cabinetExternalBrowser: (typeof appPrefs !== "undefined") ? appPrefs.getBool("cabinet_external_browser", false) : false
+    property bool cabinetMemorySaver: (typeof appPrefs !== "undefined") ? appPrefs.getBool("cabinet_memory_saver", true) : true
+
+    Connections {
+        target: (typeof appPrefs !== "undefined") ? appPrefs : null
+        function onPrefChanged(key) {
+            if (key === "cabinet_external_browser") {
+                root.cabinetExternalBrowser = appPrefs.getBool(key, false);
+            } else if (key === "cabinet_memory_saver") {
+                root.cabinetMemorySaver = appPrefs.getBool(key, true);
+            }
+        }
+    }
+
+    function failoverPoolContains(id) {
+        if (!root.hasEngine) return false
+        var ids = throneEngine.failoverServerIds
+        // Read the notifyable property so this binding re-evaluates when the
+        // pool changes; the C++ method performs the integer ID comparison.
+        return ids.length > 0 && throneEngine.isFailoverServer(Number(id))
+    }
+
+    function failoverPoolIndex(id) {
+        if (!root.hasEngine) return -1
+        var ids = throneEngine.failoverServerIds
+        for (var i = 0; i < ids.length; ++i) {
+            if (Number(ids[i]) === Number(id)) return i
+        }
+        return -1
+    }
+
+    function failoverServersInPool(query) {
+        if (!root.hasEngine || !root.hasConfigAdapter) return []
+        var servers = configAdapter.servers
+        var ids = throneEngine.failoverServerIds
+        var normalizedQuery = String(query || "").trim().toLocaleLowerCase()
+        var byId = {}
+        for (var i = 0; i < servers.length; ++i) {
+            var server = servers[i]
+            byId[Number(server.id)] = server
+        }
+
+        var result = []
+        for (var j = 0; j < ids.length; ++j) {
+            var item = byId[Number(ids[j])]
+            if (!item) continue
+            var searchable = [item.name, item.type, item.address, item.country].join(" ").toLocaleLowerCase()
+            if (!normalizedQuery || searchable.indexOf(normalizedQuery) >= 0) result.push(item)
+        }
+        return result
+    }
+
+    function failoverServersAvailable(query) {
+        if (!root.hasEngine || !root.hasConfigAdapter) return []
+        var servers = configAdapter.servers
+        var normalizedQuery = String(query || "").trim().toLocaleLowerCase()
+        var result = []
+        for (var i = 0; i < servers.length; ++i) {
+            var item = servers[i]
+            if (root.failoverPoolContains(item.id)) continue
+            var searchable = [item.name, item.type, item.address, item.country].join(" ").toLocaleLowerCase()
+            if (!normalizedQuery || searchable.indexOf(normalizedQuery) >= 0) result.push(item)
+        }
+        return result
+    }
+
+    function hasEligibleFailoverServer() {
+        if (!root.hasEngine || !root.hasConfigAdapter) return false
+        var currentId = (throneEngine.state === 2 && throneEngine.activeServerId >= 0)
+                      ? throneEngine.activeServerId : configAdapter.selectedServerId
+        var ids = throneEngine.failoverServerIds
+        for (var i = 0; i < ids.length; ++i) {
+            if (Number(ids[i]) !== Number(currentId)) return true
+        }
+        return false
+    }
 
     ScrollView {
         id: settingsScroll
@@ -76,7 +153,7 @@ Item {
 
                 ToggleRow {
                     title: qsTr("Аварийная блокировка (Kill Switch)")
-                    description: qsTr("Если VPN-туннель неожиданно оборвётся, соединение будет остановлено, а не переключено на незащищённый канал.")
+                    description: qsTr("При разрыве приложение запросит блокировку у работающего ядра. Системный firewall не устанавливается, поэтому блокировка всего трафика после сбоя ядра не гарантируется.")
                     checked: root.hasEngine && throneEngine.killSwitch
                     onToggled: function(value) {
                         if (root.hasEngine) throneEngine.killSwitch = value
@@ -84,7 +161,7 @@ Item {
 
                     Text {
                         Layout.fillWidth: true
-                        text: qsTr("Работает на уровне приложения: туннель не будет заменён прямым подключением. Блокировка трафика на уровне firewall требует прав root и не выполняется.")
+                        text: qsTr("После сбоя ядра системный firewall не включается, поэтому блокировка всего трафика не гарантируется.")
                         wrapMode: Text.WordWrap
                         color: Theme.textMuted
                         font.pixelSize: 10
@@ -92,11 +169,397 @@ Item {
                 }
 
                 ToggleRow {
-                    title: qsTr("Автопереключение при обрыве (Failover)")
-                    description: qsTr("Автоматически переподключаться к следующему доступному серверу с минимальным пингом при неожиданном разрыве связи.")
+                    objectName: "failoverToggleRow"
+                    title: qsTr("Автоматическое переключение на резервный сервер")
+                    description: qsTr("После двух неудачных проверок маршрута приложение попробует выбранные вами серверы. Смена IP может оборвать игру и другие активные соединения. Пока туннель переподключается, трафик может пойти через обычную сеть; Kill Switch приложения не гарантирует системную блокировку.")
                     checked: root.hasEngine && throneEngine.failoverEnabled
                     onToggled: function(value) {
                         if (root.hasEngine) throneEngine.failoverEnabled = value
+                    }
+
+                    ColumnLayout {
+                        objectName: "failoverControls"
+                        Layout.fillWidth: true
+                        spacing: 10
+                        visible: root.hasEngine && throneEngine.failoverEnabled
+
+                        Text {
+                            Layout.fillWidth: true
+                            text: qsTr("РЕЗЕРВНЫЙ ПУЛ · %1 выбрано").arg(root.hasEngine ? throneEngine.failoverServerIds.length : 0)
+                            color: Theme.textMuted
+                            font.pixelSize: 10
+                            font.bold: true
+                            font.letterSpacing: 0.8
+                        }
+
+                        Text {
+                            Layout.fillWidth: true
+                            text: qsTr("Текущий маршрут проверяется по нескольким адресам примерно раз в 3 секунды. Один сбой не запускает переключение.")
+                            color: Theme.textSecondary
+                            font.pixelSize: 10
+                            wrapMode: Text.WordWrap
+                        }
+
+                        Text {
+                            Layout.fillWidth: true
+                            visible: !root.hasEligibleFailoverServer()
+                            text: qsTr("Выберите хотя бы один резервный сервер, отличный от текущего.")
+                            color: Theme.textSecondary
+                            font.pixelSize: 10
+                            wrapMode: Text.WordWrap
+                        }
+
+                        RowLayout {
+                            Layout.fillWidth: true
+                            spacing: 8
+
+                            Repeater {
+                                model: [
+                                    { label: qsTr("По последнему пингу"), value: 0 },
+                                    { label: qsTr("По порядку"), value: 1 }
+                                ]
+
+                                delegate: Rectangle {
+                                    required property var modelData
+                                    Layout.fillWidth: true
+                                    height: 34
+                                    radius: 8
+                                    color: (root.hasEngine && throneEngine.failoverStrategy === modelData.value)
+                                           ? Theme.cardHover : Theme.bgDark
+                                    border.color: (root.hasEngine && throneEngine.failoverStrategy === modelData.value)
+                                                  ? Theme.textSecondary : Theme.cardBorder
+                                    border.width: 1
+
+                                    Text {
+                                        anchors.centerIn: parent
+                                        text: modelData.label
+                                        color: Theme.textPrimary
+                                        font.pixelSize: 11
+                                        font.bold: root.hasEngine && throneEngine.failoverStrategy === modelData.value
+                                    }
+
+                                    MouseArea {
+                                        anchors.fill: parent
+                                        cursorShape: Qt.PointingHandCursor
+                                        onClicked: if (root.hasEngine) throneEngine.failoverStrategy = modelData.value
+                                    }
+                                }
+                            }
+                        }
+
+                        GridLayout {
+                            id: fallbackLists
+                            objectName: "fallbackLists"
+                            Layout.fillWidth: true
+                            columns: contentCol.width >= 620 ? 2 : 1
+                            columnSpacing: 12
+                            rowSpacing: 10
+                            visible: root.hasConfigAdapter && configAdapter.serverCount > 0
+
+                            Rectangle {
+                                objectName: "fallbackAvailablePane"
+                                Layout.fillWidth: true
+                                Layout.preferredHeight: 300
+                                Layout.minimumWidth: 0
+                                radius: 12
+                                color: Theme.bgDark
+                                border.color: Theme.cardBorder
+                                border.width: 1
+
+                                ColumnLayout {
+                                    anchors.fill: parent
+                                    anchors.margins: 10
+                                    spacing: 8
+
+                                    RowLayout {
+                                        Layout.fillWidth: true
+                                        Text {
+                                            Layout.fillWidth: true
+                                            text: qsTr("Доступные серверы")
+                                            color: Theme.textPrimary
+                                            font.pixelSize: 12
+                                            font.bold: true
+                                        }
+                                        Text {
+                                            text: String(root.failoverServersAvailable(availableSearch.text).length)
+                                            color: Theme.textMuted
+                                            font.pixelSize: 10
+                                            font.family: Theme.fontMono
+                                        }
+                                    }
+
+                                    SearchField {
+                                        id: availableSearch
+                                        objectName: "fallbackAvailableSearch"
+                                        Layout.fillWidth: true
+                                        height: 34
+                                        placeholder: qsTr("Поиск сервера")
+                                    }
+
+                                    Item {
+                                        Layout.fillWidth: true
+                                        Layout.fillHeight: true
+
+                                        ListView {
+                                            id: availableFallbackList
+                                            objectName: "availableFallbackList"
+                                            anchors.fill: parent
+                                            clip: true
+                                            spacing: 5
+                                            model: root.failoverServersAvailable(availableSearch.text)
+                                            ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
+
+                                            delegate: Rectangle {
+                                                required property var modelData
+                                                width: availableFallbackList.width
+                                                height: 48
+                                                radius: 8
+                                                color: Theme.cardBg
+                                                border.color: Theme.cardBorder
+                                                border.width: 1
+
+                                                RowLayout {
+                                                    anchors.fill: parent
+                                                    anchors.leftMargin: 9
+                                                    anchors.rightMargin: 8
+                                                    spacing: 8
+
+                                                    ColumnLayout {
+                                                        Layout.fillWidth: true
+                                                        spacing: 1
+                                                        Text {
+                                                            Layout.fillWidth: true
+                                                            text: modelData.name || qsTr("Сервер")
+                                                            color: Theme.textPrimary
+                                                            font.pixelSize: 11
+                                                            font.bold: true
+                                                            elide: Text.ElideRight
+                                                        }
+                                                        Text {
+                                                            Layout.fillWidth: true
+                                                            text: [modelData.type, modelData.address,
+                                                                   modelData.ping > 0 && modelData.ping < 999 ? modelData.ping + " ms" : "—"]
+                                                                  .filter(function(part) { return Boolean(part) }).join(" · ")
+                                                            color: Theme.textMuted
+                                                            font.pixelSize: 9
+                                                            font.family: Theme.fontMono
+                                                            elide: Text.ElideRight
+                                                        }
+                                                    }
+
+                                                    ActionButton {
+                                                        objectName: "fallbackAddButton"
+                                                        text: qsTr("Добавить")
+                                                        height: 30
+                                                        enabled: root.hasEngine
+                                                        onClicked: throneEngine.setFailoverServer(modelData.id, true)
+                                                    }
+                                                }
+                                            }
+
+                                        }
+
+                                        Text {
+                                            anchors.centerIn: parent
+                                            width: parent.width - 24
+                                            text: availableSearch.text.length > 0
+                                                  ? qsTr("Серверы не найдены")
+                                                  : qsTr("Все серверы уже в резервном пуле")
+                                            color: Theme.textMuted
+                                            font.pixelSize: 10
+                                            horizontalAlignment: Text.AlignHCenter
+                                            wrapMode: Text.WordWrap
+                                            visible: availableFallbackList.count === 0
+                                        }
+                                    }
+                                }
+                            }
+
+                            Rectangle {
+                                objectName: "fallbackPoolPane"
+                                Layout.fillWidth: true
+                                Layout.preferredHeight: 300
+                                Layout.minimumWidth: 0
+                                radius: 12
+                                color: Theme.bgDark
+                                border.color: Theme.cardBorder
+                                border.width: 1
+
+                                ColumnLayout {
+                                    anchors.fill: parent
+                                    anchors.margins: 10
+                                    spacing: 8
+
+                                    RowLayout {
+                                        Layout.fillWidth: true
+                                        Text {
+                                            Layout.fillWidth: true
+                                            text: qsTr("В резервном пуле")
+                                            color: Theme.textPrimary
+                                            font.pixelSize: 12
+                                            font.bold: true
+                                        }
+                                        Text {
+                                            text: String(root.failoverServersInPool(poolSearch.text).length)
+                                            color: Theme.textMuted
+                                            font.pixelSize: 10
+                                            font.family: Theme.fontMono
+                                        }
+                                    }
+
+                                    SearchField {
+                                        id: poolSearch
+                                        objectName: "fallbackPoolSearch"
+                                        Layout.fillWidth: true
+                                        height: 34
+                                        placeholder: qsTr("Поиск сервера")
+                                    }
+
+                                    Item {
+                                        Layout.fillWidth: true
+                                        Layout.fillHeight: true
+
+                                        ListView {
+                                            id: selectedFallbackList
+                                            objectName: "selectedFallbackList"
+                                            anchors.fill: parent
+                                            clip: true
+                                            spacing: 5
+                                            model: root.failoverServersInPool(poolSearch.text)
+                                            ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
+
+                                            delegate: Rectangle {
+                                                required property var modelData
+                                                readonly property int profileId: Number(modelData.id)
+                                                readonly property int poolOrderIndex: root.failoverPoolIndex(profileId)
+                                                width: selectedFallbackList.width
+                                                height: 52
+                                                radius: 8
+                                                color: Theme.cardBg
+                                                border.color: Theme.cardBorder
+                                                border.width: 1
+
+                                                RowLayout {
+                                                    anchors.fill: parent
+                                                    anchors.leftMargin: 9
+                                                    anchors.rightMargin: 8
+                                                    spacing: 5
+
+                                                    ColumnLayout {
+                                                        Layout.fillWidth: true
+                                                        spacing: 1
+                                                        Text {
+                                                            Layout.fillWidth: true
+                                                            text: modelData.name || qsTr("Сервер")
+                                                            color: Theme.textPrimary
+                                                            font.pixelSize: 11
+                                                            font.bold: true
+                                                            elide: Text.ElideRight
+                                                        }
+                                                        Text {
+                                                            Layout.fillWidth: true
+                                                            text: [modelData.type, modelData.address,
+                                                                   modelData.ping > 0 && modelData.ping < 999 ? modelData.ping + " ms" : "—"]
+                                                                  .filter(function(part) { return Boolean(part) }).join(" · ")
+                                                            color: Theme.textMuted
+                                                            font.pixelSize: 9
+                                                            font.family: Theme.fontMono
+                                                            elide: Text.ElideRight
+                                                        }
+                                                    }
+
+                                                    Column {
+                                                        spacing: 2
+                                                        Repeater {
+                                                            model: [
+                                                                { glyph: "↑", label: qsTr("Переместить выше"), delta: -1 },
+                                                                { glyph: "↓", label: qsTr("Переместить ниже"), delta: 1 }
+                                                            ]
+                                                            delegate: Rectangle {
+                                                                required property var modelData
+                                                                width: 26
+                                                                height: 24
+                                                                radius: 6
+                                                                color: moveButtonMouse.containsMouse ? Theme.cardHover : Theme.bgDark
+                                                                border.color: activeFocus ? Theme.textSecondary : Theme.cardBorder
+                                                                opacity: moveButtonMouse.enabled ? 1 : 0.4
+                                                                Accessible.role: Accessible.Button
+                                                                Accessible.name: modelData.label
+                                                                Accessible.onPressAction: {
+                                                                    var targetIndex = poolOrderIndex + modelData.delta
+                                                                    if (root.hasEngine && targetIndex >= 0 && targetIndex < throneEngine.failoverServerIds.length)
+                                                                        throneEngine.moveFailoverServer(profileId, modelData.delta)
+                                                                }
+                                                                activeFocusOnTab: moveButtonMouse.enabled
+                                                                Keys.onReturnPressed: function(event) {
+                                                                    if (!moveButtonMouse.enabled) return
+                                                                    throneEngine.moveFailoverServer(profileId, modelData.delta)
+                                                                    event.accepted = true
+                                                                }
+                                                                Keys.onSpacePressed: function(event) {
+                                                                    if (!moveButtonMouse.enabled) return
+                                                                    throneEngine.moveFailoverServer(profileId, modelData.delta)
+                                                                    event.accepted = true
+                                                                }
+
+                                                                Text {
+                                                                    anchors.centerIn: parent
+                                                                    text: modelData.glyph
+                                                                    color: Theme.textPrimary
+                                                                    font.pixelSize: 12
+                                                                    font.bold: true
+                                                                }
+                                                                MouseArea {
+                                                                    id: moveButtonMouse
+                                                                    anchors.fill: parent
+                                                                    hoverEnabled: true
+                                                                    enabled: root.hasEngine &&
+                                                                             poolOrderIndex + modelData.delta >= 0 &&
+                                                                             poolOrderIndex + modelData.delta < throneEngine.failoverServerIds.length
+                                                                    cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
+                                                                    onClicked: throneEngine.moveFailoverServer(profileId, modelData.delta)
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+
+                                                    ActionButton {
+                                                        objectName: "fallbackRemoveButton"
+                                                        text: qsTr("Убрать")
+                                                        height: 30
+                                                        enabled: root.hasEngine
+                                                        onClicked: throneEngine.setFailoverServer(modelData.id, false)
+                                                    }
+                                                }
+                                            }
+
+                                        }
+
+                                        Text {
+                                            anchors.centerIn: parent
+                                            width: parent.width - 24
+                                            text: poolSearch.text.length > 0
+                                                  ? qsTr("Серверы не найдены")
+                                                  : qsTr("Добавьте серверы из списка слева")
+                                            color: Theme.textMuted
+                                            font.pixelSize: 10
+                                            horizontalAlignment: Text.AlignHCenter
+                                            wrapMode: Text.WordWrap
+                                            visible: selectedFallbackList.count === 0
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        Text {
+                            Layout.fillWidth: true
+                            visible: root.hasConfigAdapter && configAdapter.serverCount === 0
+                            text: qsTr("Сначала добавьте серверы во вкладке «Серверы».")
+                            color: Theme.textMuted
+                            font.pixelSize: 10
+                            wrapMode: Text.WordWrap
+                        }
                     }
                 }
 
@@ -375,29 +838,33 @@ Item {
                 }
 
                 ToggleRow {
+                    objectName: "cabinetExternalBrowserToggle"
                     title: qsTr("Открывать кабинет во внешнем браузере")
                     description: !root.hasWebEngineSupport ?
                                  qsTr("В текущей сборке встроенный веб-движок не установлен. Кабинет всегда открывается в системном браузере.") :
                                  qsTr("При переходе во вкладку «Кабинет» отображать карточку для перехода в системный браузер вместо встроенного веб-движка.")
-                    checked: !root.hasWebEngineSupport || ((typeof appPrefs !== "undefined") ? appPrefs.getBool("cabinet_external_browser", false) : false)
+                    checked: !root.hasWebEngineSupport || root.cabinetExternalBrowser
                     switchEnabled: root.hasWebEngineSupport
                     opacity: root.hasWebEngineSupport ? 1.0 : 0.55
                     onToggled: function(value) {
                         if (typeof appPrefs !== "undefined" && root.hasWebEngineSupport) {
+                            root.cabinetExternalBrowser = value;
                             appPrefs.setBool("cabinet_external_browser", value);
                         }
                     }
                 }
 
                 ToggleRow {
+                    objectName: "cabinetMemorySaverToggle"
                     title: qsTr("Режим экономии памяти для кабинета")
                     badge: qsTr("РЕКОМЕНДУЕТСЯ")
                     description: qsTr("Автоматически выгружать веб-движок Chromium при неактивности или сворачивании приложения для полного освобождения RAM.")
-                    checked: (typeof appPrefs !== "undefined") ? appPrefs.getBool("cabinet_memory_saver", true) : true
+                    checked: root.cabinetMemorySaver
                     switchEnabled: root.hasWebEngineSupport
                     opacity: root.hasWebEngineSupport ? 1.0 : 0.55
                     onToggled: function(value) {
                         if (typeof appPrefs !== "undefined" && root.hasWebEngineSupport) {
+                            root.cabinetMemorySaver = value;
                             appPrefs.setBool("cabinet_memory_saver", value);
                         }
                     }
@@ -639,7 +1106,7 @@ Item {
                             Text {
                                 Layout.fillWidth: true
                                 wrapMode: Text.WordWrap
-                                text: qsTr("TUN-режим требует cap_net_admin для сетевого демона. Приложение запросит права через Polkit — сам интерфейс не работает от root.")
+                                text: qsTr("Для TUN приложение установит отдельную root-owned копию ядра в каталоге текущего пользователя и назначит ей только cap_net_admin. Доступ к копии ограничен ACL; действие требует подтверждения Polkit.")
                                 color: Theme.textSecondary
                                 font.pixelSize: 11
                             }
@@ -647,7 +1114,7 @@ Item {
 
                         ActionButton {
                             Layout.alignment: Qt.AlignVCenter
-                            text: qsTr("Настроить")
+                            text: qsTr("Установить права TUN")
                             onClicked: if (root.hasEngine) throneEngine.requestElevateCapabilities()
                         }
                     }

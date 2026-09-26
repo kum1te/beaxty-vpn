@@ -17,7 +17,7 @@ Licensed under the **GNU General Public License v3.0 (GPL-3.0)**.
   1. **Full Tunnel**: All traffic routed via the encrypted VPN tunnel.
   2. **Bypass Domestic & Local (RU)**: Intelligently bypasses domestic Russian services, banking, government domains (`geosite:ru`, `geoip:ru`), and local LAN subnets.
   3. **Custom Split-Tunneling**: Granular domain manager allowing users to add custom whitelist/blacklist rules.
-- **Least-Privilege Security Architecture**: The GUI runs strictly as an unprivileged regular user (`non-root`), delegating network interface creation to the Go core daemon via Linux capabilities (`cap_net_admin,cap_net_bind_service+ep`).
+- **Least-Privilege Security Architecture**: The GUI runs as a regular user. On Linux, TUN setup installs a root-owned copy of the exact core binary in a per-user protected directory and grants only `CAP_NET_ADMIN`; an ACL prevents other local users from executing that copy. The GUI and core never receive SUID-root.
 - **Comprehensive Test Suite**: Automated verification covering unit tests, configuration generation, process lifecycle (0 zombie processes), and resource audits (<100ms startup, <35MB PSS memory, 0.0% idle CPU).
 
 ---
@@ -43,18 +43,18 @@ graph TD
 
 On Arch Linux / Manjaro:
 ```bash
-sudo pacman -S base-devel cmake ninja qt6-base qt6-declarative qt6-quickcontrols2 go protobuf
+sudo pacman -S base-devel cmake ninja qt6-base qt6-declarative qt6-quickcontrols2 go protobuf acl libcap polkit
 ```
 
 On Ubuntu / Debian:
 ```bash
 sudo apt update
-sudo apt install build-essential cmake ninja-build qt6-base-dev qt6-declarative-dev libqt6quickcontrols2-5-dev golang-go protobuf-compiler libprotobuf-dev libcap2-bin
+sudo apt install build-essential cmake ninja-build qt6-base-dev qt6-declarative-dev libqt6quickcontrols2-5-dev golang-go protobuf-compiler libprotobuf-dev acl libcap2-bin pkexec polkitd
 ```
 
 On Fedora:
 ```bash
-sudo dnf install @development-tools cmake ninja-build qt6-qtbase-devel qt6-qtdeclarative-devel golang protobuf-compiler libcap-devel
+sudo dnf install @development-tools cmake ninja-build qt6-qtbase-devel qt6-qtdeclarative-devel golang protobuf-compiler acl libcap-devel polkit
 ```
 
 ---
@@ -68,11 +68,10 @@ The core daemon embeds `sing-box` (v1.14.0-rc.5) and `Xray-core` with support fo
 ```
 This produces `bin/beaxty-core`.
 
-### 2. Configure Linux Capabilities (One-time setup for non-root TUN)
-To allow `beaxty-core` to configure the TUN network interface without running the GUI as root:
-```bash
-./scripts/setup-cap.sh
-```
+### 2. Linux TUN permissions
+On the first connection in TUN mode, the app explains why the permission is needed and asks for confirmation before making one Polkit request to a narrow installer helper. It verifies and installs a root-owned copy of the bundled core at a content-derived path in a per-user directory under `/usr/lib/beaxty-vpn`. A POSIX ACL allows only the current UID to traverse that directory; the core receives only `CAP_NET_ADMIN`. This requires `pkexec`, `acl`, and `libcap`; the app does not run the GUI as root and does not set SUID bits. After setup, later connections reuse the verified copy without asking again. If authorization is declined, TUN stays unavailable until permissions are configured.
+
+Versions that used the old SUID setup may have left a privileged `beaxty-core` behind. This version refuses to launch a bundled core that still has SUID/SGID bits or file capabilities; an administrator must remove those old privilege bits before the bundled core can run.
 
 ### 3. Build the BeaxtyVPN Desktop Client
 Configure and build with CMake and Ninja in Release mode:
@@ -105,53 +104,21 @@ Options:
 
 ## Verification & Automated Test Suite
 
-BeaxtyVPN includes an automated test and audit suite:
-
-1. **End-to-End Subscription Import & SQLite Integrity**:
-   ```bash
-   ./build/test_subscription_import
-   ```
-   *Imports real VLESS links and Base64 subscription lists, verifying foreign key integrity (`PRAGMA foreign_key_check: 0 violations`) and database persistence.*
-
-2. **Hardware Identity Validation**:
-   ```bash
-   ./build/test_hwid
-   ```
-   *Verifies deterministic SHA-256 generation from `/etc/machine-id` and masking in log outputs.*
-
-3. **Sing-Box Config & Preset Generation**:
-   ```bash
-   QT_QPA_PLATFORM=offscreen ./build/test_config_builder
-   ```
-   *Verifies default TUN mode auto_route, 3 routing presets, and subscription parsing.*
-
-4. **Performance & Resource Audit**:
-   ```bash
-   ./tests/test_performance.sh
-   ```
-   *Verifies cold start latency (<1.2s target, achieved: ~106ms), memory footprint (target <80MB, achieved: ~32MB PSS / 20MB private heap), and idle CPU usage (<0.5%, achieved: 0.0%).*
-
-5. **TUN Lifecycle & Process Isolation**:
-   ```bash
-   ./tests/test_tun_lifecycle.sh
-   ```
-   *Runs 10 rapid connect/disconnect cycles, verifying zero zombie or orphaned processes.*
-
-6. **Security & Privacy Audit**:
-   ```bash
-   ./tests/test_security_audit.sh
-   ```
-   *Verifies least-privilege non-root execution, Linux capabilities separation, zero cleartext secret leaks, and DNS leak defense.*
-
-Run all automated tests together:
+Build and run the registered unit and synthetic checks:
 ```bash
-./build/test_subscription_import && \
-./build/test_hwid && \
-QT_QPA_PLATFORM=offscreen ./build/test_config_builder && \
-./tests/test_performance.sh && \
-./tests/test_tun_lifecycle.sh && \
-./tests/test_security_audit.sh
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build -j"$(nproc)"
+ctest --test-dir build --output-on-failure
 ```
+
+The static privilege audit can also be run with `bash tests/test_security_audit.sh`. It checks source and packaging invariants; it does not prove system firewall behavior, DNS leak protection, or safety under a live TUN connection.
+
+The optional screenshot harness is offline and uses a temporary database plus an explicitly missing core binary:
+```bash
+QT_QPA_PLATFORM=offscreen BEAXTY_CAPTURE_DIR=/tmp/beaxty-ui-captures ./build/test_capture_ui
+```
+
+CTest and the screenshot harness do not start the VPN core or create a tunnel. Live TUN, crash-recovery, DNS-leak, and cross-platform integration tests remain outstanding. Do not use a developer's normal profile or terminate processes by executable-name matching in automated tests.
 
 ---
 
@@ -171,7 +138,7 @@ The repository includes `.github/workflows/build-release.yml` which automaticall
 1. **Linux x86_64 AppImage** (`BeaxtyVPN-Linux-x86_64.AppImage`)
 2. **Linux x86_64 Portable Tarball** (`BeaxtyVPN-Linux-x86_64-Portable.tar.gz`)
 3. **Windows x86_64 Portable ZIP** (`BeaxtyVPN-Windows-x86_64-Portable.zip`, with Qt6 runtime and Wintun driver v0.14.1)
-4. **macOS Universal / arm64 DMG** (`BeaxtyVPN-macOS-Universal.dmg`, with bundled `BeaxtyVPN.app` and `beaxty-core`)
+4. **macOS DMG** (`BeaxtyVPN-macOS.dmg`, built for the workflow runner architecture with bundled `BeaxtyVPN.app` and `beaxty-core`)
 
 Releases are automatically published on git tag push (`v*`) or via manual trigger (`workflow_dispatch`).
 
@@ -188,8 +155,7 @@ Releases are automatically published on git tag push (`v*`) or via manual trigge
 ├── res/                   # Desktop icons, .desktop file, and Qt resources
 ├── scripts/
 │   ├── build_core.sh      # Core daemon build script
-│   ├── package_linux.sh   # Linux AppImage and portable tar.gz packager
-│   └── setup-cap.sh       # Linux capabilities setup script
+│   └── package_linux.sh   # Linux AppImage and portable tar.gz packager
 ├── src/
 │   ├── bridge/            # Headless MainWindowBridge decoupling UI from backend
 │   ├── core/              # C++ facade managers (ThroneEngine, ConfigAdapter,

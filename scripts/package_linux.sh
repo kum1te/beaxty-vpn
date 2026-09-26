@@ -32,6 +32,29 @@ else
     echo "==> Found existing core daemon: ${REPO_ROOT}/bin/beaxty-core"
 fi
 
+assert_unprivileged_core() {
+    local binary_path="$1"
+    local capabilities
+    if [[ -u "${binary_path}" || -g "${binary_path}" ]]; then
+        echo "Error: refusing to package a core binary with SUID/SGID bits: ${binary_path}" >&2
+        exit 1
+    fi
+    if ! capabilities="$(getcap "${binary_path}")"; then
+        echo "Error: could not verify file capabilities on ${binary_path}" >&2
+        exit 1
+    fi
+    if [[ -n "${capabilities}" ]]; then
+        echo "Error: refusing to package a core binary with file capabilities: ${capabilities}" >&2
+        exit 1
+    fi
+}
+
+if ! command -v getcap &>/dev/null; then
+    echo "Error: getcap is required to verify the core binary before packaging." >&2
+    exit 1
+fi
+assert_unprivileged_core "${REPO_ROOT}/bin/beaxty-core"
+
 # 2. Build Release beaxty-vpn
 echo "==> Configuring and building BeaxtyVPN (Release)..."
 if command -v ninja &>/dev/null; then
@@ -39,7 +62,7 @@ if command -v ninja &>/dev/null; then
 else
     cmake -B "${BUILD_DIR}" -S "${REPO_ROOT}" -DCMAKE_BUILD_TYPE=Release
 fi
-cmake --build "${BUILD_DIR}" --target beaxty-vpn -j"$(nproc)"
+cmake --build "${BUILD_DIR}" --target beaxty-vpn beaxty-vpn-privileged-helper -j"$(nproc)"
 
 # 3. Setup packaging tools
 echo "==> Preparing packaging tools..."
@@ -77,15 +100,23 @@ mkdir -p "${APPDIR}/usr/share/icons/hicolor/512x512/apps"
 
 # Copy binaries
 cp "${BUILD_DIR}/beaxty-vpn" "${APPDIR}/usr/bin/beaxty-vpn"
+cp "${BUILD_DIR}/beaxty-vpn-privileged-helper" "${APPDIR}/usr/bin/beaxty-vpn-privileged-helper"
 cp "${REPO_ROOT}/bin/beaxty-core" "${APPDIR}/usr/bin/beaxty-core"
-if [ -f "${REPO_ROOT}/scripts/setup-cap.sh" ]; then
-    cp "${REPO_ROOT}/scripts/setup-cap.sh" "${APPDIR}/usr/bin/setup-cap.sh"
+assert_unprivileged_core "${APPDIR}/usr/bin/beaxty-core"
+if [[ -u "${APPDIR}/usr/bin/beaxty-vpn-privileged-helper" || -g "${APPDIR}/usr/bin/beaxty-vpn-privileged-helper" ]]; then
+    echo "Error: refusing to package a set-ID Polkit helper." >&2
+    exit 1
 fi
 chmod +x "${APPDIR}/usr/bin/"*
 
 # Copy desktop and icon metadata
 cp "${REPO_ROOT}/res/beaxty-vpn.desktop" "${APPDIR}/usr/share/applications/beaxty-vpn.desktop"
 cp "${REPO_ROOT}/res/beaxty-vpn.desktop" "${APPDIR}/beaxty-vpn.desktop"
+
+# Keep the bundled emoji font's original license alongside the Linux artifact.
+mkdir -p "${APPDIR}/usr/share/licenses/beaxty-vpn"
+cp "${REPO_ROOT}/res/fonts/OFL.txt" "${APPDIR}/usr/share/licenses/beaxty-vpn/NotoColorEmoji-OFL.txt"
+cp "${REPO_ROOT}/res/fonts/NOTICE.md" "${APPDIR}/usr/share/licenses/beaxty-vpn/NotoColorEmoji-NOTICE.txt"
 
 ICON_OPT=()
 if [ -f "${REPO_ROOT}/res/icons/app_icon.svg" ]; then
@@ -119,20 +150,24 @@ elif command -v qmake &>/dev/null; then
     export QMAKE="$(command -v qmake)"
 fi
 
-QT_LIBS_DIR="$("${QMAKE}" -query QT_INSTALL_LIBS)"
 QT_PLUGINS_DIR="$("${QMAKE}" -query QT_INSTALL_PLUGINS)"
-QT_QML_DIR="$("${QMAKE}" -query QT_INSTALL_QML)"
 
-echo "==> Deploying all Qt6 shared libraries from ${QT_LIBS_DIR}..."
-mkdir -p "${APPDIR}/usr/lib"
-cp -a "${QT_LIBS_DIR}"/libQt6*.so* "${APPDIR}/usr/lib/" 2>/dev/null || true
-
+echo "==> Deploying Qt modules and QML imports used by the application..."
 "${TOOLS_DIR}/linuxdeploy" \
     --appdir "${APPDIR}" \
     --executable "${APPDIR}/usr/bin/beaxty-vpn" \
+    --executable "${APPDIR}/usr/bin/beaxty-vpn-privileged-helper" \
     --desktop-file "${APPDIR}/beaxty-vpn.desktop" \
-    "${ICON_OPT[@]}" \
-    --plugin qt || true
+    "${ICON_OPT[@]}"
+
+# Run the Qt plugin directly so its exclude-library option reaches the plugin.
+# The WebEngine dependency graph includes Qt Positioning even though the app
+# denies geolocation; those provider plugins are unused and some require the
+# optional Qt SerialPort module. QML imports still come from our bundled sources.
+QML_SOURCES_PATHS="${REPO_ROOT}/src/ui/qml" "${TOOLS_DIR}/linuxdeploy-plugin-qt" \
+    --appdir "${APPDIR}" \
+    --exclude-library='libqtposition_*' \
+    || echo "WARNING: Qt plugin reported an optional deployment issue; required QML imports and ELF dependencies are verified below."
 
 # Explicitly deploy Qt Plugins and QML modules to guarantee complete autonomous runtime
 echo "==> Deploying Qt plugins from ${QT_PLUGINS_DIR}..."
@@ -141,13 +176,19 @@ cp -r "${QT_PLUGINS_DIR}/platforms" "${APPDIR}/usr/plugins/"
 cp -r "${QT_PLUGINS_DIR}/tls" "${APPDIR}/usr/plugins/" 2>/dev/null || true
 cp -r "${QT_PLUGINS_DIR}/imageformats" "${APPDIR}/usr/plugins/" 2>/dev/null || true
 cp -r "${QT_PLUGINS_DIR}/networkinformation" "${APPDIR}/usr/plugins/" 2>/dev/null || true
-if ls "${QT_PLUGINS_DIR}"/wayland-* 1> /dev/null 2>&1; then
-    cp -r "${QT_PLUGINS_DIR}"/wayland-* "${APPDIR}/usr/plugins/" 2>/dev/null || true
-fi
+# This is a Wayland client. linuxdeploy may include optional compositor/server
+# integrations, which are for hosting Wayland surfaces and pull in Qt libraries
+# that the application neither uses nor ships. Keep client integrations only.
+rm -rf "${APPDIR}/usr/plugins/wayland-graphics-integration-server" \
+       "${APPDIR}/usr/plugins/wayland-shell-integration"
 
-echo "==> Deploying QML modules from ${QT_QML_DIR}..."
-mkdir -p "${APPDIR}/usr/qml"
-cp -r "${QT_QML_DIR}/"* "${APPDIR}/usr/qml/"
+echo "==> QML imports are deployed from ${REPO_ROOT}/src/ui/qml by the Qt plugin."
+for qml_module in QtQuick QtQuick/Controls QtQuick/Layouts QtQuick/Window QtWebEngine QtWebChannel; do
+    if [ ! -s "${APPDIR}/usr/qml/${qml_module}/qmldir" ]; then
+        echo "ERROR: Required QML module was not deployed: ${qml_module}" >&2
+        exit 1
+    fi
+done
 
 echo "==> Resolving deep dependencies for plugins and QML modules..."
 for plugin in "${APPDIR}/usr/plugins/platforms/"*.so; do
@@ -200,9 +241,13 @@ echo "==> Bundling NSS runtime modules from ${NSS_MODULES_DIR}..."
 mkdir -p "${APPDIR}/usr/lib/nss"
 shopt -s nullglob
 NSS_RUNTIME_FILES=(
-    "${NSS_MODULES_DIR}"/*.so
-    "${NSS_MODULES_DIR}"/*.so.*
-    "${NSS_MODULES_DIR}"/*.chk
+    "${NSS_MODULES_DIR}"/libsoftokn3.so*
+    "${NSS_MODULES_DIR}"/libsoftokn3.chk*
+    "${NSS_MODULES_DIR}"/libfreebl*.so*
+    "${NSS_MODULES_DIR}"/libfreebl*.chk
+    "${NSS_MODULES_DIR}"/libnss*.so*
+    "${NSS_MODULES_DIR}"/libsmime3.so*
+    "${NSS_MODULES_DIR}"/libssl3.so*
 )
 shopt -u nullglob
 if [ "${#NSS_RUNTIME_FILES[@]}" -eq 0 ]; then
@@ -331,6 +376,10 @@ if [ -L "${APPDIR}/AppRun" ]; then
 fi
 if ! file "${APPDIR}/usr/bin/beaxty-vpn" | grep -q "ELF"; then
     echo "ERROR: ${APPDIR}/usr/bin/beaxty-vpn is NOT an ELF binary!" >&2
+    exit 1
+fi
+if ! file "${APPDIR}/usr/bin/beaxty-vpn-privileged-helper" | grep -q "ELF"; then
+    echo "ERROR: the Polkit helper is NOT an ELF binary!" >&2
     exit 1
 fi
 

@@ -16,6 +16,18 @@ Item {
     readonly property int vpnState: (typeof throneEngine !== "undefined") ? throneEngine.state : 0
     readonly property bool tunEnabled: (typeof throneEngine !== "undefined") && throneEngine.tunModeEnabled
     readonly property bool hasServer: (typeof configAdapter !== "undefined") && configAdapter.serverCount > 0
+    readonly property int displayedServerId: (typeof throneEngine !== "undefined" && throneEngine.state === 2 && throneEngine.activeServerId >= 0)
+                                             ? throneEngine.activeServerId
+                                             : ((typeof configAdapter !== "undefined") ? configAdapter.selectedServerId : -1)
+
+    function serverById(id) {
+        if (typeof configAdapter === "undefined") return null;
+        var list = configAdapter.servers;
+        for (var i = 0; i < list.length; ++i) {
+            if (Number(list[i].id) === Number(id)) return list[i];
+        }
+        return null;
+    }
 
     function parseServerFlagAndName(rawName, countryCode) {
         if (!rawName) return { flag: "🌐", name: qsTr("Select a server") };
@@ -52,9 +64,10 @@ Item {
     }
 
     readonly property var activeServerParsed: parseServerFlagAndName(
-        (typeof configAdapter !== "undefined") ? configAdapter.selectedServerName : "",
-        (typeof configAdapter !== "undefined") ? configAdapter.selectedServerCountry : ""
+        displayedServerInfo ? displayedServerInfo.name : "",
+        displayedServerInfo ? displayedServerInfo.country : ""
     )
+    readonly property var displayedServerInfo: serverById(displayedServerId)
 
     ScrollView {
         id: dashboardScroll
@@ -65,13 +78,14 @@ Item {
 
         Item {
             width: dashboardScroll.width
-            implicitHeight: dashboardContent.implicitHeight + 48
+            implicitHeight: Math.max(dashboardContent.implicitHeight + 48, root.height)
 
             ColumnLayout {
                 id: dashboardContent
+                objectName: "dashboardContent"
                 anchors.horizontalCenter: parent.horizontalCenter
                 anchors.top: parent.top
-                anchors.topMargin: 24
+                anchors.topMargin: Math.max(24, (root.height - dashboardContent.implicitHeight) / 2)
                 width: Math.min(parent.width - 48, 460)
                 spacing: 16
 
@@ -117,7 +131,10 @@ Item {
 
                             Text {
                                 anchors.verticalCenter: parent.verticalCenter
-                                text: (typeof throneEngine !== "undefined") ? throneEngine.stateString : "DISCONNECTED"
+                                text: {
+                                    var currentLanguage = (typeof locManager !== "undefined") ? locManager.language : "ru";
+                                    return (typeof throneEngine !== "undefined") ? throneEngine.stateLabel : qsTr("ОТКЛЮЧЕНО");
+                                }
                                 color: Theme.textPrimary
                                 font.pixelSize: 11
                                 font.bold: true
@@ -149,9 +166,11 @@ Item {
                 Text {
                     Layout.alignment: Qt.AlignHCenter
                     Layout.fillWidth: true
-                    text: !root.hasServer
-                          ? qsTr("Добавьте узел, чтобы подключиться")
-                          : ((typeof throneEngine !== "undefined") ? throneEngine.statusMessage : qsTr("Ready to connect"))
+                    text: {
+                        var currentLanguage = (typeof locManager !== "undefined") ? locManager.language : "ru";
+                        if (!root.hasServer) return qsTr("Добавьте узел, чтобы подключиться");
+                        return (typeof throneEngine !== "undefined") ? throneEngine.localizedStatusMessage : qsTr("Ready to connect");
+                    }
                     color: Theme.textSecondary
                     font.pixelSize: 13
                     horizontalAlignment: Text.AlignHCenter
@@ -190,7 +209,8 @@ Item {
                                 text: (typeof trafficMonitor !== "undefined") ? trafficMonitor.downloadSpeed : "0.0 KB/s"
                                 color: Theme.textPrimary
                                 font.pixelSize: 11
-                                font.family: Theme.fontMono
+                                font.family: Theme.fontSans
+                                font.letterSpacing: 0
                                 font.bold: true
                                 anchors.verticalCenter: parent.verticalCenter
                             }
@@ -219,7 +239,8 @@ Item {
                                 text: (typeof trafficMonitor !== "undefined") ? trafficMonitor.uploadSpeed : "0.0 KB/s"
                                 color: Theme.textPrimary
                                 font.pixelSize: 11
-                                font.family: Theme.fontMono
+                                font.family: Theme.fontSans
+                                font.letterSpacing: 0
                                 font.bold: true
                                 anchors.verticalCenter: parent.verticalCenter
                             }
@@ -247,7 +268,8 @@ Item {
                                 text: (typeof trafficMonitor !== "undefined") ? trafficMonitor.totalTraffic : "0 B"
                                 color: Theme.textSecondary
                                 font.pixelSize: 11
-                                font.family: Theme.fontMono
+                                font.family: Theme.fontSans
+                                font.letterSpacing: 0
                                 font.bold: true
                                 anchors.verticalCenter: parent.verticalCenter
                             }
@@ -261,6 +283,9 @@ Item {
                 Card {
                     Layout.fillWidth: true
                     interactive: true
+                    accessibleName: root.hasServer
+                                   ? qsTr("Сменить сервер: %1").arg(root.activeServerParsed.name)
+                                   : qsTr("Выбрать сервер")
                     onClicked: root.requestNodesView()
 
                     RowLayout {
@@ -303,9 +328,13 @@ Item {
 
                             Text {
                                 Layout.fillWidth: true
-                                text: (typeof configAdapter !== "undefined" && configAdapter.selectedServerType.length > 0)
-                                      ? (configAdapter.selectedServerType + " • " + (root.hasServer ? qsTr("Сменить сервер") : qsTr("Добавить узел")))
-                                      : (root.hasServer ? qsTr("Сменить сервер") : qsTr("Добавить узел"))
+                                text: (typeof throneEngine !== "undefined" && throneEngine.state === 2 &&
+                                       throneEngine.activeServerId >= 0 && typeof configAdapter !== "undefined" &&
+                                       throneEngine.activeServerId !== configAdapter.selectedServerId)
+                                      ? qsTr("Резервный сервер • Сменить сервер")
+                                      : ((root.displayedServerInfo && root.displayedServerInfo.type)
+                                         ? (root.displayedServerInfo.type + " • " + (root.hasServer ? qsTr("Сменить сервер") : qsTr("Добавить узел")))
+                                         : (root.hasServer ? qsTr("Сменить сервер") : qsTr("Добавить узел")))
                                 color: Theme.textMuted
                                 font.pixelSize: 11
                                 elide: Text.ElideRight
@@ -314,7 +343,7 @@ Item {
 
                         PingBadge {
                             Layout.alignment: Qt.AlignVCenter
-                            ping: (typeof configAdapter !== "undefined") ? configAdapter.selectedServerPing : 0
+                            ping: root.displayedServerInfo ? Number(root.displayedServerInfo.ping || 0) : 0
                         }
 
                         Text {
@@ -333,6 +362,12 @@ Item {
                 Card {
                     Layout.fillWidth: true
                     interactive: true
+                    accessibleName: qsTr("Настроить маршрутизацию: %1").arg(
+                        (typeof routingManager !== "undefined" && routingManager.activePreset === 1)
+                            ? qsTr("Раздельный туннель (Split Tunneling)")
+                            : ((typeof routingManager !== "undefined" && routingManager.activePreset === 2)
+                               ? qsTr("Продвинутая маршрутизация (Advanced Routing)")
+                               : qsTr("Весь трафик через VPN (Full Tunnel)")))
                     onClicked: root.requestRoutingView()
 
                     ColumnLayout {

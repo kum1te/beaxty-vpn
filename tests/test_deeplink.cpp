@@ -1,6 +1,9 @@
 // GPL-3.0 License
 // Copyright (C) 2026 BeaxtyVPN Authors
 
+#ifdef NDEBUG
+#undef NDEBUG
+#endif
 #include <cassert>
 #include <iostream>
 #include <QCoreApplication>
@@ -17,6 +20,26 @@ int main(int argc, char *argv[]) {
     std::cout << "[TestDeepLink] Running deep link parsing & security tests..." << std::endl;
 
     DeepLinkManager manager;
+
+    // Cabinet WebEngine policy uses Qt's parsed URL components, not string
+    // splitting in QML. Reject confusing authorities and unexpected origins.
+    assert(manager.isTrustedCabinetUrl(QStringLiteral("https://cabinet.beaxty.com/login")));
+    assert(manager.isTrustedCabinetUrl(QStringLiteral("https://cabinet.beaxty.com:443/login")));
+    assert(!manager.isTrustedCabinetUrl(QStringLiteral("http://cabinet.beaxty.com/login")));
+    assert(!manager.isTrustedCabinetUrl(QStringLiteral("https://cabinet.beaxty.com:444/login")));
+    assert(!manager.isTrustedCabinetUrl(QStringLiteral("https://auth.beaxty.com/login")));
+    assert(!manager.isTrustedCabinetUrl(QStringLiteral("https://cabinet.beaxty.com.evil.example/")));
+    assert(!manager.isTrustedCabinetUrl(QStringLiteral("https://cabinet.beaxty.com@evil.example/")));
+    assert(!manager.isTrustedCabinetUrl(QStringLiteral("https://@cabinet.beaxty.com/")));
+    assert(manager.isAllowedExternalUrl(QStringLiteral("https://accounts.google.com/signin")));
+    assert(!manager.isAllowedExternalUrl(QStringLiteral("http://accounts.google.com/signin")));
+    assert(!manager.isAllowedExternalUrl(QStringLiteral("https://user@accounts.google.com/")));
+    assert(!manager.isAllowedExternalUrl(QStringLiteral("https://127.0.0.1/")));
+    assert(!manager.isAllowedExternalUrl(QStringLiteral("https://192.168.1.10/")));
+    assert(!manager.isAllowedExternalUrl(QStringLiteral("javascript:alert(1)")));
+    assert(manager.isBeaxtyUrl(QStringLiteral("beaxty://import?url=https%3A%2F%2Fexample.com%2Fsub")));
+    assert(!manager.isBeaxtyUrl(QStringLiteral("beaxty://%zz")));
+    std::cout << "  [PASS] Strict URL policy for cabinet, external links, and deep links" << std::endl;
 
     // Test 1: Valid import deeplink with https URL and custom name
     {
@@ -100,6 +123,20 @@ int main(int argc, char *argv[]) {
         std::cout << "  [PASS] Reject file:// scheme" << std::endl;
     }
 
+    // Incoming links are externally supplied protocol input. Bound their size
+    // and require strict URL parsing before decoding the embedded subscription.
+    {
+        QString targetUrl, groupName, error;
+        assert(!DeepLinkManager::parseDeepLink(QString(8193, QLatin1Char('a')),
+                                               targetUrl, groupName, &error));
+        assert(!DeepLinkManager::parseDeepLink(QStringLiteral(" beaxty://import?url=https://example.com/sub"),
+                                               targetUrl, groupName, &error));
+        assert(!DeepLinkManager::parseDeepLink(
+            QStringLiteral("beaxty://import?url=https%3A%2F%2Fuser%3Apass%40example.com%2Fsub"),
+            targetUrl, groupName, &error));
+        std::cout << "  [PASS] Bound deep link size and reject malformed credential URLs" << std::endl;
+    }
+
     // Test 9: Manager signal emission on valid deeplink
     {
         bool signalReceived = false;
@@ -119,6 +156,6 @@ int main(int argc, char *argv[]) {
         std::cout << "  [PASS] Manager signal emission" << std::endl;
     }
 
-    std::cout << "[TestDeepLink] All 9 tests passed successfully!" << std::endl;
+    std::cout << "[TestDeepLink] All tests passed successfully!" << std::endl;
     return 0;
 }

@@ -19,6 +19,12 @@ public:
     // Returns true if successfully handled.
     Q_INVOKABLE bool handleDeepLink(const QString &rawUrl);
 
+    // URL policy shared by the embedded cabinet view and unit tests. Parsing is
+    // intentionally done here with QUrl rather than reimplemented in QML.
+    Q_INVOKABLE bool isBeaxtyUrl(const QString &rawUrl) const;
+    Q_INVOKABLE bool isTrustedCabinetUrl(const QString &rawUrl) const;
+    Q_INVOKABLE bool isAllowedExternalUrl(const QString &rawUrl) const;
+
     // Static helper to validate and parse deeplink without side effects
     static bool parseDeepLink(const QString &rawUrl, QString &targetUrl, QString &groupName, QString *outError = nullptr);
 

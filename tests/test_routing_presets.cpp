@@ -6,6 +6,7 @@
 #include <QApplication>
 #include <QTimer>
 #include <QFile>
+#include <QTemporaryDir>
 
 #include "src/core/ThroneEngine.hpp"
 #include "src/core/ConfigAdapter.hpp"
@@ -31,14 +32,14 @@ int main(int argc, char *argv[]) {
     QObject::connect(&toastManager, &ToastManager::toastRequested, &app,
         [&](const QString &msg, const QString &, int) { lastToast = msg; });
 
+    QTemporaryDir tempDir(QStringLiteral("beaxty-routing-presets-XXXXXX"));
+    if (!tempDir.isValid()) return 1;
     ThroneEngine engine;
     TrafficMonitor trafficMonitor;
     ConfigAdapter configAdapter;
+    const QString testDbPath = tempDir.filePath(QStringLiteral("throne.db"));
 
-    QString testDbPath = QStringLiteral("/tmp/test_routing_presets.db");
-    if (QFile::exists(testDbPath)) QFile::remove(testDbPath);
-
-    engine.initialize(testDbPath);
+    engine.initialize(testDbPath, tempDir.filePath(QStringLiteral("missing-core")));
 
     RoutingManager routingManager;
     routingManager.initializeRouteProfiles();

@@ -15,9 +15,11 @@
 #include <QCommandLineParser>
 #include <QTimer>
 #include <QLockFile>
+#include <QStandardPaths>
 #include <memory>
 
 #include "src/core/DeepLinkManager.hpp"
+#include "src/core/ActivationChannel.hpp"
 #include "src/core/ThroneEngine.hpp"
 #include "src/core/ConfigAdapter.hpp"
 #include "src/core/DeviceIdentity.hpp"
@@ -28,6 +30,7 @@
 #include "src/core/AutostartManager.hpp"
 #include "src/core/AppPrefs.hpp"
 #include "src/ui/Theme.hpp"
+#include "src/ui/EmojiFont.hpp"
 #include "src/bridge/MainWindowBridge.hpp"
 
 #if defined(BEAXTY_HAS_WEBENGINE)
@@ -38,10 +41,6 @@
 
 #include <QQuickWindow>
 #include <QLocalSocket>
-#include <QLocalServer>
-
-// Abstract-namespace local socket a second launch uses to raise the running window.
-static const QString kActivationSocketName = QStringLiteral("beaxty-vpn-activation");
 
 static QIcon createMonochromeTrayIcon(bool connected) {
     QPixmap pixmap(64, 64);
@@ -128,6 +127,8 @@ int main(int argc, char *argv[]) {
 #endif
     qputenv("QT_QUICK_CONTROLS_STYLE", "Basic");
     QApplication app(argc, argv);
+
+    registerEmojiFallback();
 #if !defined(_WIN32)
     setupUnixSignalHandlers(&app);
 #endif
@@ -174,17 +175,27 @@ int main(int argc, char *argv[]) {
     // Single-instance protection to prevent conflicts over core daemon and network
     // interface. A second launch pokes the running instance to show its window,
     // which is what a user double-clicking the launcher actually expects.
-    QString lockPath = QDir::tempPath() + QStringLiteral("/beaxty-vpn.lock");
+    QString runtimeBase = QStandardPaths::writableLocation(QStandardPaths::RuntimeLocation);
+    if (runtimeBase.isEmpty()) {
+        runtimeBase = QDir(QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation))
+                          .filePath(QStringLiteral("runtime"));
+    }
+    const QString activationDirectory = QDir(runtimeBase).filePath(QStringLiteral("beaxty-vpn"));
+    if (!ActivationChannel::preparePrivateDirectory(activationDirectory)) {
+        qCritical() << "[BeaxtyVPN] Cannot prepare a private per-user runtime directory.";
+        return 1;
+    }
+
+    const QString lockPath = QDir(activationDirectory).filePath(QStringLiteral("instance.lock"));
     QLockFile lockFile(lockPath);
     if (!lockFile.tryLock(100)) {
         QLocalSocket poke;
-        poke.connectToServer(kActivationSocketName);
+        poke.connectToServer(ActivationChannel::serverNameForDirectory(activationDirectory));
         if (poke.waitForConnected(500)) {
-            if (!pendingDeepLink.isEmpty()) {
-                poke.write("DEEPLINK " + pendingDeepLink.toUtf8() + "\n");
-            } else {
-                poke.write("show\n");
-            }
+            const QByteArray activation = pendingDeepLink.isEmpty()
+                ? QByteArrayLiteral("show\n")
+                : QByteArrayLiteral("DEEPLINK ") + pendingDeepLink.toUtf8() + '\n';
+            poke.write(activation);
             poke.waitForBytesWritten(300);
             poke.disconnectFromServer();
             qInfo() << "[BeaxtyVPN] Already running; forwarded activation/deeplink to existing window.";
@@ -197,9 +208,7 @@ int main(int argc, char *argv[]) {
     // Initialize headless MainWindow bridge for Throne backend compatibility
     UI_InitMainWindow();
 
-    // Theme and toasts come first: initialize() below reports failures through
-    // ToastManager, and a null instance would silently swallow them.
-    Theme theme;
+    // Toasts must exist before initialize(), which reports failures through them.
     ToastManager toastManager;
 
     // Core Managers & Facades
@@ -213,7 +222,6 @@ int main(int argc, char *argv[]) {
     TrafficMonitor trafficMonitor;
     LocalizationManager locManager;
     AutostartManager autostartManager;
-    AppPrefsService appPrefsService;
 
     // Register beaxty:// URL scheme handler in OS if enabled or first run
     DeepLinkManager::registerScheme();
@@ -260,6 +268,9 @@ int main(int argc, char *argv[]) {
     // Initialize database, settings, routes, and core daemon
     QString customDb = parser.value(dbOption);
     engine.initialize(customDb);
+    // These services read preferences from the SQLite database opened above.
+    Theme theme;
+    AppPrefsService appPrefsService;
     deviceIdentity = std::make_unique<DeviceIdentity>();
     routingManager.initializeRouteProfiles();
     configAdapter.setDemoDataEnabled(parser.isSet(demoDataOption) || ConfigAdapter::demoDataRequestedFromEnv());
@@ -509,31 +520,19 @@ int main(int argc, char *argv[]) {
     trayIcon.setContextMenu(&trayMenu);
     trayIcon.show();
 
-    // Second-instance activation channel: a later launch connects here instead of
-    // dying silently, and we surface the existing window.
-    QLocalServer activationServer;
-    QLocalServer::removeServer(kActivationSocketName);
-    if (activationServer.listen(kActivationSocketName)) {
-        QObject::connect(&activationServer, &QLocalServer::newConnection, &app,
-                         [&activationServer, showMainWindow, &deepLinkManager]() {
-            while (auto *conn = activationServer.nextPendingConnection()) {
-                QObject::connect(conn, &QLocalSocket::readyRead, conn, [conn, showMainWindow, &deepLinkManager]() {
-                    QByteArray data = conn->readAll();
-                    QString msg = QString::fromUtf8(data).trimmed();
-                    showMainWindow();
-                    if (msg.startsWith(QStringLiteral("DEEPLINK "))) {
-                        QString url = msg.mid(9).trimmed();
-                        if (!url.isEmpty()) {
-                            deepLinkManager.handleDeepLink(url);
-                        }
-                    }
-                });
-                QObject::connect(conn, &QLocalSocket::disconnected, conn, &QLocalSocket::deleteLater);
-                showMainWindow();
-            }
-        });
+    // This endpoint is private to the current account and only accepts a
+    // bounded, single-command message from a same-user local peer.
+    ActivationChannel activationChannel;
+    QObject::connect(&activationChannel, &ActivationChannel::showRequested, &app, showMainWindow);
+    QObject::connect(&activationChannel, &ActivationChannel::deepLinkRequested, &app,
+                     [&deepLinkManager, showMainWindow](const QString &url) {
+        showMainWindow();
+        deepLinkManager.handleDeepLink(url);
+    });
+    if (activationChannel.listenInDirectory(activationDirectory)) {
+        qInfo() << "[BeaxtyVPN] Per-user activation channel is ready.";
     } else {
-        qWarning() << "[BeaxtyVPN] Activation channel unavailable:" << activationServer.errorString();
+        qWarning() << "[BeaxtyVPN] Per-user activation channel is unavailable.";
     }
 
     // Auto-connect on launch, if the user enabled it.

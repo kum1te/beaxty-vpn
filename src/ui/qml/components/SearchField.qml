@@ -15,7 +15,7 @@ Rectangle {
     radius: 12
     color: Theme.cardBg
     border.color: textInput.activeFocus ? Theme.textSecondary : Theme.cardBorder
-    border.width: 1
+    border.width: textInput.activeFocus ? 2 : 1
 
     Behavior on border.color { ColorAnimation { duration: 150 } }
 
@@ -47,6 +47,8 @@ Rectangle {
                 selectByMouse: true
                 clip: true
                 activeFocusOnTab: true
+                Accessible.name: root.placeholder
+                Accessible.searchEdit: true
                 Keys.onEscapePressed: textInput.text = ""
 
                 Text {
@@ -62,20 +64,49 @@ Rectangle {
 
         // Clear button
         Image {
+            id: clearButton
             anchors.verticalCenter: parent.verticalCenter
             width: 14
             height: 14
             source: Theme.icon("qrc:/icons/close.svg", Theme.isDark)
             opacity: 0.6
             visible: textInput.text.length > 0
+            Accessible.role: Accessible.Button
+            Accessible.name: qsTr("Очистить поиск")
+            Accessible.onPressAction: {
+                textInput.text = ""
+                textInput.forceActiveFocus()
+            }
+            activeFocusOnTab: visible
+            Keys.onReturnPressed: {
+                textInput.text = ""
+                textInput.forceActiveFocus()
+            }
+            Keys.onSpacePressed: {
+                textInput.text = ""
+                textInput.forceActiveFocus()
+            }
 
             MouseArea {
+                id: clearMouseArea
                 anchors.fill: parent
+                anchors.margins: -5
                 cursorShape: Qt.PointingHandCursor
+                hoverEnabled: true
                 onClicked: {
                     textInput.text = "";
                     textInput.forceActiveFocus();
                 }
+            }
+
+            Rectangle {
+                anchors.fill: parent
+                anchors.margins: -3
+                radius: 5
+                color: "transparent"
+                border.color: Theme.textSecondary
+                border.width: 2
+                visible: clearButton.activeFocus
             }
         }
     }
