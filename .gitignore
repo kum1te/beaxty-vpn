@@ -19,6 +19,9 @@ AppDir/
 *.a
 *.so
 *.dylib
+*.dll
+*.pdb
+*.ilk
 
 # Cache and temporary directories
 .cache/
@@ -41,6 +44,8 @@ throne.db
 *.core
 *.dmp
 dump/
+Testing/
+compile_commands.json
 
 # Media, test captures and screenshots (root only)
 /*.png
@@ -59,12 +64,15 @@ bganim.mp4
 .qtcreator/
 .claude/
 .codex/
+.claude/
 .gemini/
 *.user
 *.user.*
 *.swp
 *~
 CMakeUserPresets.json
+aqtinstall.log
+bganim.mp4
 
 # Operating System temporary files
 .DS_Store
