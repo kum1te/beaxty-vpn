@@ -206,17 +206,15 @@ bool MainWindow::get_elevated_permissions(ExitReason reason) {
     if (n == QMessageBox::Yes) {
         runOnNewThread([=,this]
         {
-            auto chownArgs = QString("root:root " + Configs::FindCoreRealPath());
-            auto ret = Linux_Run_Command("chown", chownArgs);
+            auto ret = Linux_Run_Command("chown", {QStringLiteral("root:root"), Configs::FindCoreRealPath()});
             if (ret != 0) {
-                MW_show_log(QString("Failed to run chown %1 code is %2").arg(chownArgs).arg(ret));
+                MW_show_log(QString("Failed to run chown (exit code %1)").arg(ret));
             }
-            auto chmodArgs = QString("u+s " + Configs::FindCoreRealPath());
-            ret = Linux_Run_Command("chmod", chmodArgs);
+            ret = Linux_Run_Command("chmod", {QStringLiteral("u+s"), Configs::FindCoreRealPath()});
             if (ret == 0) {
                 StopVPNProcess();
             } else {
-                MW_show_log(QString("Failed to run chmod %1").arg(chmodArgs));
+                MW_show_log(QString("Failed to run chmod (exit code %1)").arg(ret));
             }
         });
         return false;

@@ -908,6 +908,30 @@ func (s *server) InstallDashboard(ctx context.Context, in *gen.InstallDashboardR
 		return &gen.ErrorResp{Error: To("missing archive path or target dir")}, nil
 	}
 
+	// InstallDashboard is reachable through the local IPC protocol while the
+	// daemon may have elevated capabilities. Accept only the exact paths supplied
+	// by the GUI at process start; never let a caller choose an arbitrary root
+	// directory or archive to read.
+	baseDir := os.Getenv("THRONE_BASE_PATH")
+	allowedDashboardDir := os.Getenv("THRONE_DASHBOARD_DIR")
+	if baseDir == "" || allowedDashboardDir == "" {
+		return &gen.ErrorResp{Error: To("dashboard installation paths are not configured")}, nil
+	}
+	baseAbs, err := filepath.Abs(baseDir)
+	if err != nil {
+		return &gen.ErrorResp{Error: To("invalid dashboard base path")}, nil
+	}
+	targetAbs, err := filepath.Abs(targetDir)
+	if err != nil || filepath.Clean(targetAbs) != filepath.Clean(allowedDashboardDir) {
+		return &gen.ErrorResp{Error: To("dashboard target is outside the application data directory")}, nil
+	}
+	archiveAbs, err := filepath.Abs(archivePath)
+	if err != nil || filepath.Clean(filepath.Dir(archiveAbs)) != filepath.Clean(baseAbs) {
+		return &gen.ErrorResp{Error: To("dashboard archive is outside the application data directory")}, nil
+	}
+	archivePath = archiveAbs
+	targetDir = targetAbs
+
 	reader, err := zip.OpenReader(archivePath)
 	if err != nil {
 		return &gen.ErrorResp{Error: To(E.Cause(err, "open dashboard archive").Error())}, nil

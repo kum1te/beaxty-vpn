@@ -144,14 +144,12 @@ bool MainWindow::get_elevated_permissions(ExitReason reason) {
         return false;
     }
 
-    auto chownArgs = QStringLiteral("root:root ") + corePath;
-    auto ret = Linux_Run_Command(QStringLiteral("chown"), chownArgs);
+    auto ret = Linux_Run_Command(QStringLiteral("chown"), {QStringLiteral("root:root"), corePath});
     if (ret != 0) {
         qWarning() << "[MainWindowBridge] Failed to run pkexec chown:" << ret;
         return false;
     }
-    auto chmodArgs = QStringLiteral("4755 ") + corePath;
-    ret = Linux_Run_Command(QStringLiteral("chmod"), chmodArgs);
+    ret = Linux_Run_Command(QStringLiteral("chmod"), {QStringLiteral("4755"), corePath});
     if (ret != 0) {
         qWarning() << "[MainWindowBridge] Failed to run pkexec chmod:" << ret;
         return false;
@@ -231,4 +229,3 @@ OrgFreedesktopPortalRequestInterface::OrgFreedesktopPortalRequestInterface(
 
 OrgFreedesktopPortalRequestInterface::~OrgFreedesktopPortalRequestInterface() {}
 #endif
-

@@ -4,9 +4,13 @@
 #include <QProcess>
 #include <QStandardPaths>
 
-int Linux_Run_Command(const QString &commandName, const QString &args) {
-    auto command = QString("pkexec %1 %2").arg(Linux_FindCapProgsExec(commandName)).arg(args);
-    return system(command.toStdString().c_str());
+int Linux_Run_Command(const QString &commandName, const QStringList &args) {
+    const QString pkexec = QStandardPaths::findExecutable(QStringLiteral("pkexec"));
+    if (pkexec.isEmpty()) return -1;
+
+    QStringList elevatedArgs;
+    elevatedArgs << Linux_FindCapProgsExec(commandName) << args;
+    return QProcess::execute(pkexec, elevatedArgs);
 }
 
 bool Linux_HavePkexec() {

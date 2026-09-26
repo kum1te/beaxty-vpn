@@ -569,6 +569,12 @@ bool ThroneEngine::spawnCoreDaemon() {
 #endif
     auto env = QProcessEnvironment::systemEnvironment();
     env.insert(QStringLiteral("THRONE_CORE_SOCKET"), fullSocketName);
+    // Privileged dashboard extraction is constrained by the GUI-selected data
+    // directory. The daemon must not accept arbitrary filesystem paths over IPC.
+    const QString basePath = QDir(Configs::GetBasePath()).absolutePath();
+    env.insert(QStringLiteral("THRONE_BASE_PATH"), basePath);
+    env.insert(QStringLiteral("THRONE_DASHBOARD_DIR"),
+               QDir(basePath).filePath(QStringLiteral("sb-dashboard")));
     env.insert(QStringLiteral("GOTRACEBACK"), QStringLiteral("crash"));
     m_coreProcess->setProcessEnvironment(env);
 
