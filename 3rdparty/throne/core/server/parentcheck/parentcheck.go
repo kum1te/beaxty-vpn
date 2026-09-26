@@ -35,4 +35,7 @@ func CheckParentProcess() {
 	if parentBase != "Throne" && parentBase != "beaxty-vpn" && !strings.HasPrefix(parentBase, "test_") {
 		log.Fatalf("parent check failed: unexpected parent %q, selfPath is %q", parentPath, selfPath)
 	}
+	if err := validatePrivilegedParent(parentPath, selfPath); err != nil {
+		log.Fatalf("parent check failed: %v", err)
+	}
 }
