@@ -162,6 +162,59 @@ done
 # Remove any accidental .so copied into usr/bin
 rm -f "${APPDIR}/usr/bin/"*.so* 2>/dev/null || true
 
+# QtWebEngine's Chromium runtime loads NSS modules with dlopen(), so linuxdeploy
+# cannot discover these dependencies by inspecting ELF DT_NEEDED entries.
+# Bundle the NSS modules together with their integrity-check files and expose
+# this directory through LD_LIBRARY_PATH at runtime.
+NSS_MULTIARCH=""
+if command -v dpkg-architecture &>/dev/null; then
+    NSS_MULTIARCH="$(dpkg-architecture -qDEB_HOST_MULTIARCH 2>/dev/null || true)"
+fi
+
+NSS_SEARCH_DIRS=()
+if [ -n "${NSS_MULTIARCH}" ]; then
+    NSS_SEARCH_DIRS+=(
+        "/usr/lib/${NSS_MULTIARCH}/nss"
+        "/lib/${NSS_MULTIARCH}/nss"
+        "/usr/lib/${NSS_MULTIARCH}"
+        "/lib/${NSS_MULTIARCH}"
+    )
+fi
+NSS_SEARCH_DIRS+=(/usr/lib/nss /usr/lib64/nss /lib/nss /usr/lib /lib)
+
+NSS_MODULES_DIR=""
+for candidate in "${NSS_SEARCH_DIRS[@]}"; do
+    if [ -s "${candidate}/libsoftokn3.so" ]; then
+        NSS_MODULES_DIR="${candidate}"
+        break
+    fi
+done
+
+if [ -z "${NSS_MODULES_DIR}" ]; then
+    echo "ERROR: Could not find the NSS runtime module libsoftokn3.so." >&2
+    echo "       Install the system NSS runtime package before packaging." >&2
+    exit 1
+fi
+
+echo "==> Bundling NSS runtime modules from ${NSS_MODULES_DIR}..."
+mkdir -p "${APPDIR}/usr/lib/nss"
+shopt -s nullglob
+NSS_RUNTIME_FILES=(
+    "${NSS_MODULES_DIR}"/*.so
+    "${NSS_MODULES_DIR}"/*.so.*
+    "${NSS_MODULES_DIR}"/*.chk
+)
+shopt -u nullglob
+if [ "${#NSS_RUNTIME_FILES[@]}" -eq 0 ]; then
+    echo "ERROR: No NSS runtime files found in ${NSS_MODULES_DIR}." >&2
+    exit 1
+fi
+cp -pL "${NSS_RUNTIME_FILES[@]}" "${APPDIR}/usr/lib/nss/"
+if [ ! -s "${APPDIR}/usr/lib/nss/libsoftokn3.so" ]; then
+    echo "ERROR: Failed to bundle libsoftokn3.so into the AppDir." >&2
+    exit 1
+fi
+
 echo "==> Creating qt.conf..."
 cat << 'QTCONF' > "${APPDIR}/usr/bin/qt.conf"
 [Paths]
@@ -228,7 +281,7 @@ if [ "${BEAXTY_ALLOW_NO_SANDBOX:-}" = "1" ] && [ -z "${QTWEBENGINE_CHROMIUM_FLAG
     export QTWEBENGINE_CHROMIUM_FLAGS="--no-sandbox"
 fi
 # Libraries and Qt paths
-export LD_LIBRARY_PATH="${HERE}/usr/lib:${HERE}/usr/lib/x86_64-linux-gnu:${LD_LIBRARY_PATH:-}"
+export LD_LIBRARY_PATH="${HERE}/usr/lib/nss:${HERE}/usr/lib:${HERE}/usr/lib/x86_64-linux-gnu:${LD_LIBRARY_PATH:-}"
 export QT_PLUGIN_PATH="${HERE}/usr/plugins"
 export QT_QPA_PLATFORM_PLUGIN_PATH="${HERE}/usr/plugins/platforms"
 export QML_IMPORT_PATH="${HERE}/usr/qml"
@@ -256,7 +309,7 @@ if [ "${BEAXTY_ALLOW_NO_SANDBOX:-}" = "1" ] && [ -z "${QTWEBENGINE_CHROMIUM_FLAG
     export QTWEBENGINE_CHROMIUM_FLAGS="--no-sandbox"
 fi
 
-export LD_LIBRARY_PATH="${HERE}/usr/lib:${HERE}/usr/lib/x86_64-linux-gnu:${LD_LIBRARY_PATH:-}"
+export LD_LIBRARY_PATH="${HERE}/usr/lib/nss:${HERE}/usr/lib:${HERE}/usr/lib/x86_64-linux-gnu:${LD_LIBRARY_PATH:-}"
 export QT_PLUGIN_PATH="${HERE}/usr/plugins"
 export QT_QPA_PLATFORM_PLUGIN_PATH="${HERE}/usr/plugins/platforms"
 export QML_IMPORT_PATH="${HERE}/usr/qml"
@@ -288,7 +341,7 @@ FAIL_VERIFY=0
 ERRORS=()
 while IFS= read -r elf_file; do
     if file "${elf_file}" | grep -q "ELF"; then
-        ldd_out=$(LD_LIBRARY_PATH="${APPDIR}/usr/lib:${APPDIR}/usr/lib/x86_64-linux-gnu" ldd "${elf_file}" 2>&1 || true)
+        ldd_out=$(LD_LIBRARY_PATH="${APPDIR}/usr/lib/nss:${APPDIR}/usr/lib:${APPDIR}/usr/lib/x86_64-linux-gnu" ldd "${elf_file}" 2>&1 || true)
         
         # 1. Check for missing dependencies
         if echo "${ldd_out}" | grep -q "not found"; then
