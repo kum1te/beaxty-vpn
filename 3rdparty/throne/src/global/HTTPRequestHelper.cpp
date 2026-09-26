@@ -93,6 +93,15 @@ namespace Configs_network {
             }
             return false;
         }
+
+        QString safeOriginForLog(const QUrl &url) {
+            if (!url.isValid() || url.scheme().isEmpty() || url.host().isEmpty()) {
+                return QStringLiteral("<invalid-url>");
+            }
+            QString origin = url.scheme().toLower() + QStringLiteral("://") + url.host().toLower();
+            if (url.port() > 0) origin += QStringLiteral(":%1").arg(url.port());
+            return origin;
+        }
     }
 
     bool NetworkRequestHelper::IsSafePublicUrl(const QUrl &url) {
@@ -135,7 +144,8 @@ namespace Configs_network {
 
         QUrl parsedUrl(url);
         if (!IsSafePublicUrl(parsedUrl)) {
-            QString blockedMsg = QObject::tr("Blocked request to prohibited host/IP: %1").arg(url);
+            QString blockedMsg = QObject::tr("Blocked request to prohibited host/IP: %1")
+                                     .arg(safeOriginForLog(parsedUrl));
             QTimer::singleShot(0, context, [done = std::move(done), blockedMsg]() {
                 done(HTTPResponse{blockedMsg});
             });
@@ -214,7 +224,8 @@ namespace Configs_network {
         auto reply = accessManager->get(request);
         connect(reply, &QNetworkReply::redirected, reply, [reply](const QUrl &redirectUrl) {
             if (!IsSafePublicUrl(redirectUrl)) {
-                qWarning() << "[HTTPRequestHelper] Blocked SSRF redirect to:" << redirectUrl;
+                qWarning() << "[HTTPRequestHelper] Blocked SSRF redirect to:"
+                           << safeOriginForLog(redirectUrl);
                 reply->abort();
             }
         });
@@ -261,7 +272,8 @@ namespace Configs_network {
     QString NetworkRequestHelper::DownloadAsset(const QString &url, const QString &fileName, bool useProxy) {
         QUrl parsedUrl(url);
         if (!IsSafePublicUrl(parsedUrl)) {
-            return QObject::tr("Blocked download from prohibited host/IP: %1").arg(url);
+            return QObject::tr("Blocked download from prohibited host/IP: %1")
+                .arg(safeOriginForLog(parsedUrl));
         }
 
         QNetworkRequest request;
@@ -291,7 +303,8 @@ namespace Configs_network {
         auto _reply = accessManager.get(request);
         connect(_reply, &QNetworkReply::redirected, _reply, [_reply](const QUrl &redirectUrl) {
             if (!IsSafePublicUrl(redirectUrl)) {
-                qWarning() << "[HTTPRequestHelper] Blocked SSRF redirect in DownloadAsset to:" << redirectUrl;
+                qWarning() << "[HTTPRequestHelper] Blocked SSRF redirect in DownloadAsset to:"
+                           << safeOriginForLog(redirectUrl);
                 _reply->abort();
             }
         });

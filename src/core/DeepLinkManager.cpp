@@ -40,6 +40,21 @@ DeepLinkManager *DeepLinkManager::instance() {
     return s_instance;
 }
 
+namespace {
+QString safeUrlForLog(const QString &rawUrl) {
+    const QUrl parsed(rawUrl);
+    if (!parsed.isValid() || parsed.scheme().isEmpty() || parsed.host().isEmpty()) {
+        return QStringLiteral("<invalid-url>");
+    }
+
+    // Subscription tokens commonly live in the path or query. Keep only the
+    // origin and never write credentials, paths, fragments, or query strings.
+    QString result = parsed.scheme().toLower() + QStringLiteral("://") + parsed.host().toLower();
+    if (parsed.port() > 0) result += QStringLiteral(":%1").arg(parsed.port());
+    return result;
+}
+}
+
 bool DeepLinkManager::parseDeepLink(const QString &rawUrl, QString &targetUrl, QString &groupName, QString *outError) {
     targetUrl.clear();
     groupName.clear();
@@ -144,14 +159,16 @@ bool DeepLinkManager::handleDeepLink(const QString &rawUrl) {
     QString error;
 
     if (!parseDeepLink(rawUrl, targetUrl, groupName, &error)) {
-        qWarning() << "[DeepLinkManager] Rejected deep link:" << rawUrl << "Reason:" << error;
+        qWarning() << "[DeepLinkManager] Rejected deep link from:" << safeUrlForLog(rawUrl)
+                   << "Reason:" << error;
         if (ToastManager::instance()) {
             ToastManager::instance()->showError(QStringLiteral("Ошибка ссылки: %1").arg(error));
         }
         return false;
     }
 
-    qInfo() << "[DeepLinkManager] Valid deep link received. Target:" << targetUrl << "Group:" << groupName;
+    qInfo() << "[DeepLinkManager] Valid deep link received. Target origin:"
+            << safeUrlForLog(targetUrl) << "Group:" << groupName;
     emit deepLinkReceived(targetUrl, groupName);
     return true;
 }

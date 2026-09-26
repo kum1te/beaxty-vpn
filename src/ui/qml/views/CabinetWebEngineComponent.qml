@@ -90,7 +90,8 @@ WebEngineView {
             // External URL: reject in embedded browser and open in external system browser
             if (typeof request.reject === "function") request.reject();
             else request.action = WebEngineNavigationRequest.IgnoreRequest;
-            console.log("[CabinetWebEngine] External URL redirected to system browser:", reqUrl);
+            console.log("[CabinetWebEngine] External URL redirected to system browser:",
+                         parts.scheme + "://" + parts.host);
             if (isAllowedExternalUrl(reqUrl)) webView.externalUrlTriggered(reqUrl);
         }
     }
