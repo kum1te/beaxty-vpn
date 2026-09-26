@@ -190,6 +190,16 @@ if [ -d "${QT_DATA_DIR}/resources" ]; then
     mkdir -p "${APPDIR}/usr/resources"
     cp -p "${QT_DATA_DIR}/resources/"*.pak "${APPDIR}/usr/resources/" 2>/dev/null || true
     cp -p "${QT_DATA_DIR}/resources/"*.dat "${APPDIR}/usr/resources/" 2>/dev/null || true
+    # Chromium's V8 startup snapshot is a .bin file, not a .dat resource.
+    # Without it QtWebEngine aborts during startup with
+    # "Error loading V8 startup snapshot file".
+    cp -p "${QT_DATA_DIR}/resources/"*.bin "${APPDIR}/usr/resources/" 2>/dev/null || true
+fi
+
+if [ ! -f "${APPDIR}/usr/resources/v8_context_snapshot.bin" ]; then
+    echo "ERROR: QtWebEngine V8 snapshot is missing from the AppDir." >&2
+    echo "       Expected: ${QT_DATA_DIR}/resources/v8_context_snapshot.bin" >&2
+    exit 1
 fi
 
 if [ -d "${QT_TRANS_DIR}/qtwebengine_locales" ]; then
