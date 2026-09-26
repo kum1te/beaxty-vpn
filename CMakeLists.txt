@@ -329,7 +329,9 @@ endif ()
 if (WIN32)
     target_sources(beaxty-vpn PRIVATE res/windows.rc)
     if (MSVC)
-        set_target_properties(beaxty-vpn PROPERTIES LINK_FLAGS "/MANIFESTUAC:\"level='requireAdministrator' uiAccess='false'\"")
+        # Keep the GUI at standard user integrity. Privileged network setup
+        # belongs in the dedicated core/helper, never in the whole UI.
+        set_target_properties(beaxty-vpn PROPERTIES LINK_FLAGS "/MANIFESTUAC:\"level='asInvoker' uiAccess='false'\"")
     endif()
 endif()
 
